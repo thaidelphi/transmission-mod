@@ -46,6 +46,10 @@
         <IsPartOfProject Value="True"/>
       </Unit>
       <Unit>
+        <Filename Value="uBencode.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit>
+      <Unit>
         <Filename Value="uRpcClient.pas"/>
         <IsPartOfProject Value="True"/>
       </Unit>

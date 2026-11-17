@@ -1,6 +1,7 @@
 unit uRpcClient;
 
 {$mode objfpc}{$H+}
+{$WARN 5024 OFF}
 
 interface
 
@@ -30,7 +31,8 @@ type
     constructor Create;
     destructor Destroy; override;
 
-    procedure Configure(const AHost: string; APort: Integer; const AUser, APass: string; ALocalSession: Boolean);
+    procedure Configure(const AHost: string; APort: Integer; const AUser, APass: string;
+      ALocalSession: Boolean; const AUrlPath: string = '/transmission/rpc');
     function EnsureLocalDaemonRunning: Boolean;
     procedure StopLocalDaemonIfOwned;
 
@@ -40,8 +42,10 @@ type
     function FetchTorrents(List: TList): Boolean;
     function FetchTorrentDetails(Torrent: TTorrentItem): Boolean;
 
-    function AddTorrentFile(const FileName, DownloadDir: string; StartImmediately: Boolean; Priority: Integer; out AddedName: string): Boolean;
-    function AddTorrentUrl(const MagnetOrUrl, DownloadDir: string; StartImmediately: Boolean; Priority: Integer; out AddedName: string): Boolean;
+    function AddTorrentFile(const FileName, DownloadDir: string; StartImmediately: Boolean;
+      Priority: Integer; const UnwantedFiles: array of Integer; out AddedName: string): Boolean;
+    function AddTorrentUrl(const MagnetOrUrl, DownloadDir: string; StartImmediately: Boolean;
+      Priority: Integer; out AddedName: string): Boolean;
 
     function StartTorrents(const Ids: array of Integer; Immediate: Boolean = False): Boolean;
     function StopTorrents(const Ids: array of Integer): Boolean;
@@ -49,15 +53,18 @@ type
     function ReannounceTorrents(const Ids: array of Integer): Boolean;
     function RemoveTorrents(const Ids: array of Integer; DeleteFiles: Boolean): Boolean;
     function SetTorrentLocation(const Ids: array of Integer; const NewDir: string; MoveData: Boolean): Boolean;
+    function RenameTorrentPath(TorrentId: Integer; const OldPath, NewName: string): Boolean;
     function QueueMove(const Ids: array of Integer; const DirectionMethod: string): Boolean;
     function SetTorrentOptions(TorrentId: Integer; Args: TJSONObject): Boolean;
     function TestPeerPort(out IsOpen: Boolean): Boolean;
     function UpdateBlocklist(out RulesCount: Integer): Boolean;
     function QueryFreeSpace(const DirPath: string; out FreeBytes: Int64): Boolean;
-    function CreateTorrentFile(const SourcePath, OutputTorrentFile: string; Trackers: TStrings; const Comment: string; IsPrivate: Boolean; out LogOutput: string): Boolean;
+    function CreateTorrentFile(const SourcePath, OutputTorrentFile: string; Trackers: TStrings;
+      const Comment: string; IsPrivate: Boolean; out LogOutput: string): Boolean;
 
     property Host: string read FHost write FHost;
     property Port: Integer read FPort write FPort;
+    property UrlPath: string read FUrlPath write FUrlPath;
     property Username: string read FUsername write FUsername;
     property Password: string read FPassword write FPassword;
     property IsLocalSession: Boolean read FIsLocalSession write FIsLocalSession;
@@ -149,7 +156,7 @@ begin
 end;
 
 procedure TTransmissionRpcClient.Configure(const AHost: string; APort: Integer;
-  const AUser, APass: string; ALocalSession: Boolean);
+  const AUser, APass: string; ALocalSession: Boolean; const AUrlPath: string);
 begin
   FHost := Trim(AHost);
   if FHost = '' then FHost := '127.0.0.1';
@@ -158,6 +165,11 @@ begin
   FUsername := AUser;
   FPassword := APass;
   FIsLocalSession := ALocalSession;
+  FUrlPath := Trim(AUrlPath);
+  if FUrlPath = '' then
+    FUrlPath := '/transmission/rpc'
+  else if FUrlPath[1] <> '/' then
+    FUrlPath := '/' + FUrlPath;
   FSessionId := '';
 end;
 
@@ -193,7 +205,6 @@ begin
   if not FIsLocalSession then
     Exit(True);
 
-  // Check if a daemon is already responding on the port
   if FetchSession(Cfg) then
     Exit(True);
 
@@ -228,7 +239,6 @@ begin
     end;
   end;
 
-  // Wait up to 2.5 seconds for RPC server to come online
   for Retries := 1 to 10 do
   begin
     Sleep(250);
@@ -597,17 +607,18 @@ end;
 
 function TTransmissionRpcClient.FetchTorrentDetails(Torrent: TTorrentItem): Boolean;
 const
-  DetailFields: array[0..25] of string = (
-    'id', 'creator', 'comment', 'pieceCount', 'pieceSize',
+  DetailFields: array[0..30] of string = (
+    'id', 'name', 'status', 'percentDone', 'sizeWhenDone', 'totalSize',
+    'rateDownload', 'rateUpload', 'uploadRatio', 'eta', 'activityDate',
+    'creator', 'comment', 'pieceCount', 'pieceSize',
     'secondsDownloading', 'secondsSeeding', 'honorsSessionLimits',
     'downloadLimited', 'downloadLimit', 'uploadLimited', 'uploadLimit',
     'seedRatioMode', 'seedRatioLimit', 'seedIdleMode', 'seedIdleLimit',
-    'peer-limit', 'files', 'fileStats', 'peers', 'trackerStats',
-    'haveValid', 'haveUnchecked', 'uploadedEver', 'downloadedEver', 'errorString'
+    'peer-limit', 'files', 'fileStats', 'peers', 'trackerStats'
   );
 var
   Args, Resp, RespArgs, TorObj, SubObj, StatObj: TJSONObject;
-  FieldsArr,IdsArr, TorArr, FilesArr, StatsArr, PeersArr, TrkArr: TJSONArray;
+  FieldsArr, IdsArr, TorArr, FilesArr, StatsArr, PeersArr, TrkArr: TJSONArray;
   I: Integer;
 begin
   if Torrent = nil then Exit(False);
@@ -633,6 +644,13 @@ begin
     TorObj := TorArr.Items[0] as TJSONObject;
     if TorObj = nil then Exit(False);
 
+    Torrent.Status := JsonGetInt(TorObj, 'status', Torrent.Status);
+    Torrent.PercentDone := JsonGetFloat(TorObj, 'percentDone', Torrent.PercentDone);
+    Torrent.RateDownload := JsonGetInt64(TorObj, 'rateDownload', Torrent.RateDownload);
+    Torrent.RateUpload := JsonGetInt64(TorObj, 'rateUpload', Torrent.RateUpload);
+    Torrent.UploadRatio := JsonGetFloat(TorObj, 'uploadRatio', Torrent.UploadRatio);
+    Torrent.ETA := JsonGetInt64(TorObj, 'eta', Torrent.ETA);
+    Torrent.ActivityDate := JsonGetInt64(TorObj, 'activityDate', Torrent.ActivityDate);
     Torrent.Creator := JsonGetStr(TorObj, 'creator', '');
     Torrent.Comment := JsonGetStr(TorObj, 'comment', '');
     Torrent.PieceCount := JsonGetInt(TorObj, 'pieceCount', 0);
@@ -729,14 +747,18 @@ begin
 end;
 
 function TTransmissionRpcClient.AddTorrentFile(const FileName, DownloadDir: string;
-  StartImmediately: Boolean; Priority: Integer; out AddedName: string): Boolean;
+  StartImmediately: Boolean; Priority: Integer; const UnwantedFiles: array of Integer;
+  out AddedName: string): Boolean;
 var
   FS: TFileStream;
   RawBytes: string;
   Encoded: string;
   Args, Resp, RespArgs, AddedObj: TJSONObject;
+  UnwantedArr: TJSONArray;
+  I: Integer;
 begin
   AddedName := '';
+  RawBytes := '';
   if not FileExists(FileName) then
   begin
     FLastError := 'File not found: ' + FileName;
@@ -759,6 +781,14 @@ begin
     Args.Add('download-dir', StringReplace(DownloadDir, '\', '/', [rfReplaceAll]));
   Args.Add('paused', not StartImmediately);
   Args.Add('bandwidthPriority', Priority);
+
+  if Length(UnwantedFiles) > 0 then
+  begin
+    UnwantedArr := TJSONArray.Create;
+    for I := Low(UnwantedFiles) to High(UnwantedFiles) do
+      UnwantedArr.Add(UnwantedFiles[I]);
+    Args.Add('files-unwanted', UnwantedArr);
+  end;
 
   Result := SendRpcRequest('torrent-add', Args, Resp);
   if not Result then Exit;
@@ -880,6 +910,22 @@ begin
   Args.Add('location', StringReplace(NewDir, '\', '/', [rfReplaceAll]));
   Args.Add('move', MoveData);
   Result := SendRpcRequest('torrent-set-location', Args, Resp);
+  Resp.Free;
+end;
+
+function TTransmissionRpcClient.RenameTorrentPath(TorrentId: Integer;
+  const OldPath, NewName: string): Boolean;
+var
+  Args, Resp: TJSONObject;
+  IdsArr: TJSONArray;
+begin
+  Args := TJSONObject.Create;
+  IdsArr := TJSONArray.Create;
+  IdsArr.Add(TorrentId);
+  Args.Add('ids', IdsArr);
+  Args.Add('path', OldPath);
+  Args.Add('name', NewName);
+  Result := SendRpcRequest('torrent-rename-path', Args, Resp);
   Resp.Free;
 end;
 
