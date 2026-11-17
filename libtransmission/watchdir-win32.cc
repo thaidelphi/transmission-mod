@@ -138,7 +138,7 @@ private:
         auto const wide_path = tr_win32_utf8_to_native(path);
         if (std::empty(wide_path))
         {
-            tr_logAddError(fmt::format(_("Couldn't convert '{path}' to native path"), fmt::arg("path", path)));
+            tr_logAddError(fmt::format(fmt::runtime(_("Couldn't convert '{path}' to native path")), fmt::arg("path", path)));
             return;
         }
 
@@ -152,7 +152,7 @@ private:
             nullptr);
         if (fd_ == INVALID_HANDLE_VALUE)
         {
-            tr_logAddError(fmt::format(_("Couldn't read '{path}'"), fmt::arg("path", path)));
+            tr_logAddError(fmt::format(fmt::runtime(_("Couldn't read '{path}'")), fmt::arg("path", path)));
             return;
         }
 
@@ -168,7 +168,7 @@ private:
                 &overlapped_,
                 nullptr)))
         {
-            tr_logAddError(fmt::format(_("Couldn't read '{path}'"), fmt::arg("path", path)));
+            tr_logAddError(fmt::format(fmt::runtime(_("Couldn't read '{path}'")), fmt::arg("path", path)));
             return;
         }
 
@@ -177,7 +177,7 @@ private:
             auto const error_code = errno;
             tr_logAddError(
                 fmt::format(
-                    _("Couldn't create pipe: {error} ({error_code})"),
+                    fmt::runtime(_("Couldn't create pipe: {error} ({error_code})")),
                     fmt::arg("error", tr_strerror(error_code)),
                     fmt::arg("error_code", error_code)));
             return;
@@ -189,7 +189,7 @@ private:
             auto const error_code = errno;
             tr_logAddError(
                 fmt::format(
-                    _("Couldn't create event: {error} ({error_code})"),
+                    fmt::runtime(_("Couldn't create event: {error} ({error_code})")),
                     fmt::arg("error", tr_strerror(error_code)),
                     fmt::arg("error_code", error_code)));
             return;
@@ -288,7 +288,7 @@ private:
             {
                 tr_logAddError(
                     fmt::format(
-                        _("Couldn't read event: expected {expected_size}, got {actual_size}"),
+                        fmt::runtime(_("Couldn't read event: expected {expected_size}, got {actual_size}")),
                         fmt::arg("expected_size", header_size),
                         fmt::arg("actual_size", nread)));
                 break;
@@ -313,7 +313,7 @@ private:
             {
                 tr_logAddError(
                     fmt::format(
-                        _("Couldn't read filename: expected {expected_size}, got {actual_size}"),
+                        fmt::runtime(_("Couldn't read filename: expected {expected_size}, got {actual_size}")),
                         fmt::arg("expected_size", nleft),
                         fmt::arg("actual_size", nread)));
                 break;
