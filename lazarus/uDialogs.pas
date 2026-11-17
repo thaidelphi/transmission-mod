@@ -7,7 +7,7 @@ interface
 
 uses
   Classes, SysUtils, Types, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
-  ComCtrls, Spin, Clipbrd, fpjson, DateUtils, uTypes, uBencode, uRpcClient;
+  ComCtrls, Spin, Clipbrd, LCLIntf, fpjson, DateUtils, uTypes, uBencode, uRpcClient, uWebServer;
 
 function ShowOpenTorrentDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   const InitialFile, DefaultDir: string; DefaultStart: Boolean;
@@ -25,7 +25,7 @@ procedure ShowDetailsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   Torrent: TTorrentItem);
 
 function ShowPrefsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
-  var Config: TSessionConfig): Boolean;
+  WebSrv: TTransmissionWebServer; var Config: TSessionConfig): Boolean;
 
 function ShowSessionDialog(Owner: TComponent; Rpc: TTransmissionRpcClient): Boolean;
 
@@ -1559,6 +1559,7 @@ type
   TPrefsForm = class(TForm)
   public
     RpcRef: TTransmissionRpcClient;
+    WebSrvRef: TTransmissionWebServer;
     ChkUpLimit: TCheckBox;
     SpnUpLimit: TSpinEdit;
     ChkDownLimit: TCheckBox;
@@ -1596,9 +1597,16 @@ type
     SpnPeerGlobal: TSpinEdit;
     SpnPeerPerTorrent: TSpinEdit;
 
+    ChkWebEnabled: TCheckBox;
+    SpnWebPort: TSpinEdit;
+    ChkWebAuth: TCheckBox;
+    EdtWebUser: TEdit;
+    EdtWebPass: TEdit;
+
     procedure BtnBrowseSaveDirClick(Sender: TObject);
     procedure BtnTestPortClick(Sender: TObject);
     procedure BtnUpdateBlocklistClick(Sender: TObject);
+    procedure BtnOpenWebClientClick(Sender: TObject);
   end;
 
 procedure TPrefsForm.BtnBrowseSaveDirClick(Sender: TObject);
@@ -1639,14 +1647,19 @@ begin
     LblBlocklistRules.Caption := 'Update failed: ' + RpcRef.LastError;
 end;
 
+procedure TPrefsForm.BtnOpenWebClientClick(Sender: TObject);
+begin
+  OpenURL(Format('http://127.0.0.1:%d/', [SpnWebPort.Value]));
+end;
+
 function ShowPrefsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
-  var Config: TSessionConfig): Boolean;
+  WebSrv: TTransmissionWebServer; var Config: TSessionConfig): Boolean;
 var
   F: TPrefsForm;
   PC: TPageControl;
-  TsSpeed, TsDown, TsSeed, TsPriv, TsNet: TTabSheet;
+  TsSpeed, TsDown, TsSeed, TsPriv, TsNet, TsRemote: TTabSheet;
   Lbl: TLabel;
-  BtnBrowse, BtnTestPort, BtnUpdBlk, BtnOK, BtnCancel: TButton;
+  BtnBrowse, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel: TButton;
   Args: TJSONObject;
 begin
   Result := False;
@@ -1655,6 +1668,7 @@ begin
   F := TPrefsForm.CreateNew(Owner);
   try
     F.RpcRef := Rpc;
+    F.WebSrvRef := WebSrv;
     F.Caption := 'Transmission Preferences';
     F.Position := poMainFormCenter;
     F.BorderStyle := bsDialog;
@@ -1949,6 +1963,74 @@ begin
     F.SpnPeerGlobal.MaxValue := 5000;
     F.SpnPeerGlobal.Value := Config.PeerLimitGlobal;
 
+    // 6. Remote / Web UI Tab (matching PrefsDialog.ui Remote tab)
+    TsRemote := PC.AddTabSheet;
+    TsRemote.Caption := 'Remote / Web';
+
+    F.ChkWebEnabled := TCheckBox.Create(TsRemote);
+    F.ChkWebEnabled.Parent := TsRemote;
+    F.ChkWebEnabled.Left := 16; F.ChkWebEnabled.Top := 20;
+    F.ChkWebEnabled.Caption := 'Allow remote web access (Built-in Web UI Server)';
+    if WebSrv <> nil then
+      F.ChkWebEnabled.Checked := WebSrv.Enabled
+    else
+      F.ChkWebEnabled.Checked := True;
+
+    Lbl := TLabel.Create(TsRemote);
+    Lbl.Parent := TsRemote;
+    Lbl.Left := 36; Lbl.Top := 56;
+    Lbl.Caption := 'HTTP Port:';
+
+    F.SpnWebPort := TSpinEdit.Create(TsRemote);
+    F.SpnWebPort.Parent := TsRemote;
+    F.SpnWebPort.Left := 140; F.SpnWebPort.Top := 52; F.SpnWebPort.Width := 95;
+    F.SpnWebPort.MinValue := 1;
+    F.SpnWebPort.MaxValue := 65535;
+    if WebSrv <> nil then
+      F.SpnWebPort.Value := WebSrv.Port
+    else
+      F.SpnWebPort.Value := 9092;
+
+    BtnOpenWeb := TButton.Create(TsRemote);
+    BtnOpenWeb.Parent := TsRemote;
+    BtnOpenWeb.Left := 252; BtnOpenWeb.Top := 50; BtnOpenWeb.Width := 145;
+    BtnOpenWeb.Caption := 'Open Web Client';
+    BtnOpenWeb.OnClick := @F.BtnOpenWebClientClick;
+
+    F.ChkWebAuth := TCheckBox.Create(TsRemote);
+    F.ChkWebAuth.Parent := TsRemote;
+    F.ChkWebAuth.Left := 16; F.ChkWebAuth.Top := 96;
+    F.ChkWebAuth.Caption := 'Use HTTP authentication';
+    if WebSrv <> nil then
+      F.ChkWebAuth.Checked := WebSrv.AuthEnabled
+    else
+      F.ChkWebAuth.Checked := False;
+
+    Lbl := TLabel.Create(TsRemote);
+    Lbl.Parent := TsRemote;
+    Lbl.Left := 36; Lbl.Top := 132;
+    Lbl.Caption := 'Username:';
+
+    F.EdtWebUser := TEdit.Create(TsRemote);
+    F.EdtWebUser.Parent := TsRemote;
+    F.EdtWebUser.Left := 140; F.EdtWebUser.Top := 128; F.EdtWebUser.Width := 190;
+    if WebSrv <> nil then
+      F.EdtWebUser.Text := WebSrv.Username
+    else
+      F.EdtWebUser.Text := 'admin';
+
+    Lbl := TLabel.Create(TsRemote);
+    Lbl.Parent := TsRemote;
+    Lbl.Left := 36; Lbl.Top := 168;
+    Lbl.Caption := 'Password:';
+
+    F.EdtWebPass := TEdit.Create(TsRemote);
+    F.EdtWebPass.Parent := TsRemote;
+    F.EdtWebPass.Left := 140; F.EdtWebPass.Top := 164; F.EdtWebPass.Width := 190;
+    F.EdtWebPass.PasswordChar := '*';
+    if WebSrv <> nil then
+      F.EdtWebPass.Text := WebSrv.Password;
+
     BtnOK := TButton.Create(F);
     BtnOK.Parent := F;
     BtnOK.Left := 324; BtnOK.Top := 330; BtnOK.Width := 80;
@@ -2004,6 +2086,17 @@ begin
 
       Rpc.UpdateSession(Args);
       Rpc.FetchSession(Config);
+
+      if WebSrv <> nil then
+      begin
+        WebSrv.Enabled := F.ChkWebEnabled.Checked;
+        WebSrv.Port := F.SpnWebPort.Value;
+        WebSrv.AuthEnabled := F.ChkWebAuth.Checked;
+        WebSrv.Username := Trim(F.EdtWebUser.Text);
+        WebSrv.Password := F.EdtWebPass.Text;
+        WebSrv.RestartServer;
+      end;
+
       Result := True;
     end;
   finally

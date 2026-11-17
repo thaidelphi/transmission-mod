@@ -8,7 +8,7 @@ interface
 uses
   Classes, SysUtils, Types, Forms, Controls, Graphics, Dialogs, Menus, ExtCtrls,
   StdCtrls, Buttons, ComCtrls, LCLType, LCLIntf, Clipbrd, IniFiles, fpjson, Math,
-  uTypes, uRpcClient, uDialogs;
+  uTypes, uRpcClient, uWebServer, uDialogs;
 
 type
   TSortMode = (
@@ -23,6 +23,7 @@ type
   TMainForm = class(TForm)
   private
     FRpc: TTransmissionRpcClient;
+    FWebServer: TTransmissionWebServer;
     FSessionConfig: TSessionConfig;
     FSessionStats: TSessionStatsData;
     FAllTorrents: TList;      // Owns TTorrentItem instances
@@ -58,6 +59,7 @@ type
     FBtnPause: TSpeedButton;
     FBtnRemove: TSpeedButton;
     FBtnProperties: TSpeedButton;
+    FBtnWebUi: TSpeedButton;
 
     // Filter Bar
     FPnlFilterBar: TPanel;
@@ -152,6 +154,7 @@ type
     procedure ActSortModeClick(Sender: TObject);
     procedure ActToggleReverseSort(Sender: TObject);
     procedure ActToggleAltSpeed(Sender: TObject);
+    procedure ActOpenWebUi(Sender: TObject);
     procedure ActShowStatistics(Sender: TObject);
     procedure ActShowAbout(Sender: TObject);
     procedure ActStatsModeClick(Sender: TObject);
@@ -269,6 +272,14 @@ begin
     PassStr := Ini.ReadString('Session', 'Password', '');
     PathStr := Ini.ReadString('Session', 'UrlPath', '/transmission/rpc');
     FRpc.Configure(HostStr, PortNum, UserStr, PassStr, LocalSess, PathStr);
+
+    if FWebServer <> nil then
+    begin
+      FWebServer.Enabled := Ini.ReadBool('WebUI', 'Enabled', True);
+      FWebServer.Port := Ini.ReadInteger('WebUI', 'Port', 9092);
+      FWebServer.AuthEnabled := Ini.ReadBool('WebUI', 'AuthEnabled', False);
+      FWebServer.Username := Ini.ReadString('WebUI', 'Username', 'admin');
+    end;
   finally
     Ini.Free;
   end;
@@ -299,6 +310,14 @@ begin
       Ini.WriteInteger('Session', 'Port', FRpc.Port);
       Ini.WriteString('Session', 'Username', FRpc.Username);
       Ini.WriteString('Session', 'UrlPath', FRpc.UrlPath);
+
+      if FWebServer <> nil then
+      begin
+        Ini.WriteBool('WebUI', 'Enabled', FWebServer.Enabled);
+        Ini.WriteInteger('WebUI', 'Port', FWebServer.Port);
+        Ini.WriteBool('WebUI', 'AuthEnabled', FWebServer.AuthEnabled);
+        Ini.WriteString('WebUI', 'Username', FWebServer.Username);
+      end;
     finally
       Ini.Free;
     end;
@@ -332,6 +351,7 @@ begin
   FStatsMode := sdmTotalRatio;
 
   FRpc := TTransmissionRpcClient.Create;
+  FWebServer := TTransmissionWebServer.Create(FRpc);
 
   BuildMenus;
   BuildToolbar;
@@ -345,6 +365,7 @@ begin
   // Start or connect to local transmission-daemon automatically
   FRpc.EnsureLocalDaemonRunning;
   FRpc.FetchSession(FSessionConfig);
+  FWebServer.StartServer;
   RenderStatusBarIcons;
   RefreshFromRpc;
 
@@ -364,6 +385,7 @@ begin
   FFilteredTorrents.Free;
   FAllTorrents.Free;
   FSelectedIds.Free;
+  FWebServer.Free;
   FRpc.Free;
 end;
 
@@ -475,6 +497,7 @@ begin
   FMainMenu.Items.Add(MnuView);
   MiCompactView := AddItem(MnuView, '&Compact View', ShortCut(Ord('C'), [ssAlt]), @ActToggleCompactView);
   MiCompactView.Checked := FCompactView;
+  AddItem(MnuView, 'Open &Web Interface', ShortCut(Ord('W'), [ssCtrl]), @ActOpenWebUi);
   AddSep(MnuView);
   MiToolbar := AddItem(MnuView, '&Toolbar', 0, @ActToggleToolbar);
   MiToolbar.Checked := True;
@@ -527,6 +550,7 @@ begin
 
   // Hamburger Options Popup Menu
   FOptionsPopup := TPopupMenu.Create(Self);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Open Web Interface (Browser)...'; PItem.OnClick := @ActOpenWebUi; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Change Session...'; PItem.OnClick := @ActChangeSession; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Preferences...'; PItem.OnClick := @ActPreferences; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Statistics...'; PItem.OnClick := @ActShowStatistics; FOptionsPopup.Items.Add(PItem);
@@ -540,6 +564,7 @@ var
 begin
   FTrayPopup := TPopupMenu.Create(Self);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Show / Hide Transmission'; PItem.OnClick := @ActToggleMainWindow; FTrayPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Open Web Interface...'; PItem.OnClick := @ActOpenWebUi; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Open Torrent...'; PItem.OnClick := @ActOpenFile; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Open URL...'; PItem.OnClick := @ActOpenUrl; FTrayPopup.Items.Add(PItem);
@@ -599,6 +624,7 @@ begin
   Sep.Height := 26;
 
   FBtnProperties := CreateToolBtn(198, 'Show torrent properties (Alt+Enter)', @ActProperties);
+  FBtnWebUi := CreateToolBtn(236, 'Open Web Interface in Browser (Ctrl+W)', @ActOpenWebUi);
 
   RenderToolbarIcons;
 end;
@@ -661,6 +687,14 @@ procedure TMainForm.RenderToolbarIcons;
             C.Pixels[11, 7] := PenCol;
             C.Pixels[12, 6] := PenCol;
           end;
+        7: // Web UI (Browser window with top bar)
+          begin
+            C.Rectangle(3, 4, 21, 20);
+            C.MoveTo(3, 9); C.LineTo(21, 9);
+            C.Pixels[6, 6] := PenCol;
+            C.Pixels[9, 6] := PenCol;
+            C.MoveTo(8, 14); C.LineTo(16, 14);
+          end;
       end;
       Btn.Glyph.Assign(Bmp);
     finally
@@ -674,6 +708,7 @@ begin
   AssignBtnIcon(FBtnPause, 4);
   AssignBtnIcon(FBtnRemove, 5);
   AssignBtnIcon(FBtnProperties, 6);
+  AssignBtnIcon(FBtnWebUi, 7);
 end;
 
 procedure TMainForm.RenderStatusBarIcons;
@@ -1797,7 +1832,7 @@ end;
 
 procedure TMainForm.ActPreferences(Sender: TObject);
 begin
-  if ShowPrefsDialog(Self, FRpc, FSessionConfig) then
+  if ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig) then
   begin
     RenderStatusBarIcons;
     RefreshFromRpc;
@@ -1870,6 +1905,14 @@ begin
   Args := TJSONObject.Create;
   Args.Add('alt-speed-enabled', FSessionConfig.AltSpeedEnabled);
   FRpc.UpdateSession(Args);
+end;
+
+procedure TMainForm.ActOpenWebUi(Sender: TObject);
+begin
+  if FWebServer <> nil then
+    OpenURL(FWebServer.GetWebUrl)
+  else
+    OpenURL('http://127.0.0.1:9091/');
 end;
 
 procedure TMainForm.ActShowStatistics(Sender: TObject);

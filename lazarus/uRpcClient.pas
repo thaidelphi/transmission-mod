@@ -59,6 +59,7 @@ type
     function TestPeerPort(out IsOpen: Boolean): Boolean;
     function UpdateBlocklist(out RulesCount: Integer): Boolean;
     function QueryFreeSpace(const DirPath: string; out FreeBytes: Int64): Boolean;
+    function ForwardRawRpc(const RequestJson: string; out ResponseJson: string): Boolean;
     function CreateTorrentFile(const SourcePath, OutputTorrentFile: string; Trackers: TStrings;
       const Comment: string; IsPrivate: Boolean; out LogOutput: string): Boolean;
 
@@ -1000,6 +1001,76 @@ begin
       FreeBytes := JsonGetInt64(RespArgs, 'size-bytes', -1);
   finally
     Resp.Free;
+  end;
+end;
+
+function TTransmissionRpcClient.ForwardRawRpc(const RequestJson: string;
+  out ResponseJson: string): Boolean;
+var
+  Http: TFPHTTPClient;
+  ReqStream, RespStream: TStringStream;
+  Attempt: Integer;
+  NewSid: string;
+begin
+  Result := False;
+  ResponseJson := '{"result":"connection-error"}';
+
+  Http := TFPHTTPClient.Create(nil);
+  try
+    Http.ConnectTimeout := 2500;
+    Http.IOTimeout := 5000;
+    Http.AllowRedirect := False;
+    if FUsername <> '' then
+    begin
+      Http.UserName := FUsername;
+      Http.Password := FPassword;
+    end;
+
+    for Attempt := 1 to 2 do
+    begin
+      Http.RequestHeaders.Clear;
+      Http.RequestHeaders.Add('Content-Type: application/json');
+      if FSessionId <> '' then
+        Http.RequestHeaders.Add('X-Transmission-Session-Id: ' + FSessionId);
+
+      ReqStream := TStringStream.Create(RequestJson);
+      RespStream := TStringStream.Create('');
+      try
+        Http.RequestBody := ReqStream;
+        try
+          Http.Post(GetRpcUrl, RespStream);
+        except
+          on E: Exception do
+          begin
+            if Http.ResponseStatusCode <> 409 then
+              Exit(False);
+          end;
+        end;
+
+        if Http.ResponseStatusCode = 409 then
+        begin
+          NewSid := ExtractHeaderValue(Http.ResponseHeaders, 'X-Transmission-Session-Id');
+          if NewSid <> '' then
+          begin
+            FSessionId := NewSid;
+            Continue;
+          end;
+        end;
+
+        if Http.ResponseStatusCode = 200 then
+        begin
+          ResponseJson := RespStream.DataString;
+          Result := True;
+          Break;
+        end;
+      finally
+        Http.RequestBody := nil;
+        ReqStream.Free;
+        RespStream.Free;
+      end;
+    end;
+  finally
+    Http.Free;
   end;
 end;
 

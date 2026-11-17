@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transmission Web Client</title>
+  <style>
+    :root {
+      --bg-main: #ffffff;
+      --bg-bar: #f6f6f6;
+      --bg-row-alt: #f9f9f9;
+      --bg-row-sel: #cce4f7;
+      --bg-row-hover: #f0f6fc;
+      --text-main: #191919;
+      --text-sub: #5f5f5f;
+      --border-col: #dcdcdc;
+      --bar-green-fill: #26a245;
+      --bar-green-back: #d6eedb;
+      --bar-green-border: #208a3a;
+      --bar-blue-fill: #3484e4;
+      --bar-blue-back: #d8e8fa;
+      --bar-blue-border: #2a70c6;
+      --bar-gray-fill: #a5a5a5;
+      --bar-gray-back: #e8e8e8;
+      --bar-gray-border: #969696;
+      --bar-red-fill: #d74646;
+      --bar-red-back: #f5dcdc;
+      --bar-red-border: #b93c3c;
+      --accent: #2a70c6;
+      --modal-bg: #ffffff;
+    }
+    body.dark {
+      --bg-main: #1e1e1e;
+      --bg-bar: #282828;
+      --bg-row-alt: #232323;
+      --bg-row-sel: #1d456b;
+      --bg-row-hover: #2a333c;
+      --text-main: #e8e8e8;
+      --text-sub: #a6a6a6;
+      --border-col: #3c3c3c;
+      --bar-green-back: #1c3823;
+      --bar-blue-back: #1b2f48;
+      --bar-gray-back: #333333;
+      --bar-red-back: #422020;
+      --modal-bg: #262626;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      font-size: 13px;
+      background: var(--bg-main);
+      color: var(--text-main);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      user-select: none;
+    }
+    /* Menu Bar */
+    .menubar {
+      display: flex;
+      align-items: center;
+      background: var(--bg-main);
+      border-bottom: 1px solid var(--border-col);
+      padding: 2px 8px;
+      height: 26px;
+      gap: 4px;
+    }
+    .menu-item {
+      position: relative;
+      padding: 3px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .menu-item:hover { background: var(--bg-row-hover); }
+    .dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      min-width: 210px;
+      background: var(--modal-bg);
+      border: 1px solid var(--border-col);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+      z-index: 1000;
+      padding: 4px 0;
+      border-radius: 4px;
+    }
+    .menu-item:hover .dropdown { display: block; }
+    .dropdown-entry {
+      padding: 6px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .dropdown-entry:hover { background: var(--bg-row-sel); }
+    .dropdown-sep { height: 1px; background: var(--border-col); margin: 4px 0; }
+    .shortcut { color: var(--text-sub); font-size: 11px; margin-left: 16px; }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      background: var(--bg-bar);
+      border-bottom: 1px solid var(--border-col);
+      height: 40px;
+      padding: 0 8px;
+      gap: 4px;
+    }
+    .tool-btn {
+      width: 34px;
+      height: 32px;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-main);
+    }
+    .tool-btn:hover:not(:disabled) {
+      background: rgba(128,128,128,0.14);
+      border-color: var(--border-col);
+    }
+    .tool-btn:disabled { opacity: 0.38; cursor: default; }
+    .tool-btn.active {
+      background: var(--bg-row-sel);
+      border-color: var(--accent);
+    }
+    .tool-sep {
+      width: 1px;
+      height: 24px;
+      background: var(--border-col);
+      margin: 0 4px;
+    }
+    .tool-btn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.9; }
+
+    /* Filter Bar */
+    .filterbar {
+      display: flex;
+      align-items: center;
+      background: var(--bg-bar);
+      border-bottom: 1px solid var(--border-col);
+      height: 34px;
+      padding: 0 10px;
+      gap: 8px;
+    }
+    .filterbar select, .filterbar input {
+      height: 24px;
+      background: var(--bg-main);
+      color: var(--text-main);
+      border: 1px solid var(--border-col);
+      border-radius: 3px;
+      padding: 0 6px;
+      font-size: 12px;
+    }
+    .filterbar select { min-width: 145px; }
+    .filterbar .search-box { margin-left: auto; width: 225px; }
+
+    /* Main Workspace (Torrent List + Inspector Drawer) */
+    .workspace {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+    .torrent-list {
+      flex: 1;
+      overflow-y: auto;
+      background: var(--bg-main);
+    }
+    .torrent-row {
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid rgba(128,128,128,0.08);
+      padding: 0 10px;
+      cursor: default;
+    }
+    .torrent-row:nth-child(even) { background: var(--bg-row-alt); }
+    .torrent-row:hover { background: var(--bg-row-hover); }
+    .torrent-row.selected { background: var(--bg-row-sel) !important; }
+    .torrent-row.paused .t-name { color: var(--text-sub); }
+    .torrent-row.error .t-name { color: #d73a3a; }
+
+    /* Compact Row (matches user screenshot) */
+    .torrent-row.compact { height: 28px; gap: 8px; }
+    .t-icon {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .t-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12.5px;
+    }
+    .t-short-status {
+      color: var(--text-sub);
+      font-size: 11.5px;
+      white-space: nowrap;
+      margin-right: 4px;
+    }
+    .pbar-compact {
+      width: 84px;
+      height: 16px;
+      border: 1px solid var(--bar-green-border);
+      background: var(--bar-green-back);
+      position: relative;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .pbar-fill {
+      height: 100%;
+      background: var(--bar-green-fill);
+      transition: width 0.25s ease;
+    }
+    .pbar-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: #ffffff;
+      text-shadow: 0 0 2px rgba(0,0,0,0.65);
+      font-weight: 500;
+    }
+
+    /* Full Row (4-line view) */
+    .torrent-row.full {
+      height: 68px;
+      padding: 6px 12px;
+      gap: 10px;
+      border-bottom: 1px solid var(--border-col);
+    }
+    .full-body { flex: 1; display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+    .full-title { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .full-sub { font-size: 11.5px; color: var(--text-sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pbar-full {
+      width: 100%;
+      height: 11px;
+      border: 1px solid var(--bar-green-border);
+      background: var(--bar-green-back);
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Inspector / Properties Side Panel */
+    .inspector {
+      width: 460px;
+      border-left: 1px solid var(--border-col);
+      background: var(--bg-main);
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .inspector.open { display: flex; }
+    .insp-header {
+      padding: 8px 12px;
+      background: var(--bg-bar);
+      border-bottom: 1px solid var(--border-col);
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .insp-tabs {
+      display: flex;
+      background: var(--bg-bar);
+      border-bottom: 1px solid var(--border-col);
+      padding: 0 6px;
+      gap: 2px;
+    }
+    .insp-tab {
+      padding: 6px 10px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+    .insp-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 600;
+    }
+    .insp-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+    .kv-row {
+      display: flex;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+    .kv-key { width: 130px; font-weight: 600; flex-shrink: 0; color: var(--text-sub); }
+    .kv-val { flex: 1; word-break: break-all; }
+    table.grid-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    table.grid-table th, table.grid-table td {
+      border: 1px solid var(--border-col);
+      padding: 4px 6px;
+      text-align: left;
+    }
+    table.grid-table th { background: var(--bg-bar); }
+
+    /* Status Bar */
+    .statusbar {
+      height: 28px;
+      background: var(--bg-bar);
+      border-top: 1px solid var(--border-col);
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .status-btn {
+      width: 24px;
+      height: 22px;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 3px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-main);
+    }
+    .status-btn:hover { border-color: var(--border-col); background: rgba(128,128,128,0.12); }
+    .status-btn.active { background: #cce4f7; border-color: var(--accent); color: var(--accent); }
+    .status-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+
+    /* Modals & Context Menu */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.42);
+      z-index: 2000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--modal-bg);
+      border: 1px solid var(--border-col);
+      border-radius: 6px;
+      width: 520px;
+      max-width: 95vw;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.28);
+    }
+    .modal-header {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-col);
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-body { padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .modal-footer {
+      padding: 10px 14px;
+      border-top: 1px solid var(--border-col);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .btn {
+      padding: 5px 14px;
+      border: 1px solid var(--border-col);
+      background: var(--bg-bar);
+      color: var(--text-main);
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .form-row { display: flex; flex-direction: column; gap: 4px; }
+    .form-row input[type="text"], .form-row input[type="number"], .form-row select, .form-row textarea {
+      padding: 6px 8px;
+      border: 1px solid var(--border-col);
+      border-radius: 4px;
+      background: var(--bg-main);
+      color: var(--text-main);
+    }
+    .ctx-menu {
+      display: none;
+      position: fixed;
+      background: var(--modal-bg);
+      border: 1px solid var(--border-col);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+      border-radius: 4px;
+      padding: 4px 0;
+      z-index: 3000;
+      min-width: 210px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Menu Bar (matches Transmission Qt) -->
+  <div class="menubar">
+    <div class="menu-item">File
+      <div class="dropdown">
+        <div class="dropdown-entry" onclick="openFileModal()"><span>Open...</span><span class="shortcut">Ctrl+O</span></div>
+        <div class="dropdown-entry" onclick="openUrlModal()"><span>Open URL...</span><span class="shortcut">Ctrl+U</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="rpcAction('torrent-start', [])"><span>Start All</span></div>
+        <div class="dropdown-entry" onclick="rpcAction('torrent-stop', [])"><span>Pause All</span></div>
+      </div>
+    </div>
+    <div class="menu-item">Edit
+      <div class="dropdown">
+        <div class="dropdown-entry" onclick="selectAllTorrents()"><span>Select All</span><span class="shortcut">Ctrl+A</span></div>
+        <div class="dropdown-entry" onclick="deselectAllTorrents()"><span>Deselect All</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="openPrefsModal()"><span>Preferences...</span></div>
+      </div>
+    </div>
+    <div class="menu-item">Torrent
+      <div class="dropdown">
+        <div class="dropdown-entry" onclick="toggleInspector(true)"><span>Properties</span><span class="shortcut">Alt+Enter</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="startSelected(false)"><span>Start</span><span class="shortcut">Ctrl+S</span></div>
+        <div class="dropdown-entry" onclick="startSelected(true)"><span>Start Now</span></div>
+        <div class="dropdown-entry" onclick="pauseSelected()"><span>Pause</span><span class="shortcut">Ctrl+P</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="verifySelected()"><span>Verify Local Data</span></div>
+        <div class="dropdown-entry" onclick="reannounceSelected()"><span>Ask Tracker for More Peers</span></div>
+        <div class="dropdown-entry" onclick="relocateSelected()"><span>Set Location...</span></div>
+        <div class="dropdown-entry" onclick="copyMagnetSelected()"><span>Copy Magnet Link</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="removeSelected(false)"><span>Remove</span><span class="shortcut">Del</span></div>
+        <div class="dropdown-entry" onclick="removeSelected(true)"><span>Delete Files and Remove</span><span class="shortcut">Shift+Del</span></div>
+      </div>
+    </div>
+    <div class="menu-item">View
+      <div class="dropdown">
+        <div class="dropdown-entry" onclick="toggleCompactView()"><span id="mnuCompactLabel">✓ Compact View</span><span class="shortcut">Alt+C</span></div>
+        <div class="dropdown-entry" onclick="toggleDarkMode()"><span>Toggle Dark / Light Theme</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="setSort('queue')"><span>Sort by Queue</span></div>
+        <div class="dropdown-entry" onclick="setSort('activity')"><span>Sort by Activity</span></div>
+        <div class="dropdown-entry" onclick="setSort('name')"><span>Sort by Name</span></div>
+        <div class="dropdown-entry" onclick="setSort('progress')"><span>Sort by Progress</span></div>
+        <div class="dropdown-entry" onclick="setSort('ratio')"><span>Sort by Ratio</span></div>
+        <div class="dropdown-entry" onclick="setSort('size')"><span>Sort by Size</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="toggleReverseSort()"><span>Reverse Sort Order</span></div>
+      </div>
+    </div>
+    <div class="menu-item">Help
+      <div class="dropdown">
+        <div class="dropdown-entry" onclick="openStatsModal()"><span>Statistics</span></div>
+        <div class="dropdown-sep"></div>
+        <div class="dropdown-entry" onclick="alert('Transmission 4.2.0-dev Web Interface\nConnected to Transmission JSON-RPC Engine')"><span>About</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toolbar (matches Transmission Qt icons) -->
+  <div class="toolbar">
+    <button class="tool-btn" title="Open a torrent" onclick="openFileModal()">
+      <svg viewBox="0 0 24 24"><path d="M6 3h9l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M12 18v-7"/><path d="M9 14l3-3 3 3"/></svg>
+    </button>
+    <button class="tool-btn" title="Open URL or Magnet Link" onclick="openUrlModal()">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+    </button>
+    <button class="tool-btn" id="btnStart" title="Start selected torrents" onclick="startSelected(false)" disabled>
+      <svg viewBox="0 0 24 24"><polygon points="7,4 19,12 7,20"/></svg>
+    </button>
+    <button class="tool-btn" id="btnPause" title="Pause selected torrents" onclick="pauseSelected()" disabled>
+      <svg viewBox="0 0 24 24"><line x1="8" y1="5" x2="8" y2="19"/><line x1="16" y1="5" x2="16" y2="19"/></svg>
+    </button>
+    <button class="tool-btn" id="btnRemove" title="Remove selected torrents" onclick="removeSelected(false)" disabled>
+      <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div class="tool-sep"></div>
+    <button class="tool-btn" id="btnProps" title="Show torrent properties" onclick="toggleInspector()">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="10" x2="12" y2="17"/><circle cx="12" cy="7" r="0.8" fill="currentColor"/></svg>
+    </button>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="filterbar">
+    <span>Show:</span>
+    <select id="selStateFilter" onchange="renderTorrents()">
+      <option value="all">All</option>
+      <option value="active">Active</option>
+      <option value="downloading">Downloading</option>
+      <option value="seeding">Seeding</option>
+      <option value="paused">Paused</option>
+      <option value="finished">Finished</option>
+      <option value="error">Error</option>
+    </select>
+    <select id="selTrackerFilter" onchange="renderTorrents()">
+      <option value="all">All</option>
+    </select>
+    <input type="text" class="search-box" id="edtSearch" placeholder="Search..." oninput="renderTorrents()" />
+  </div>
+
+  <!-- Main Workspace -->
+  <div class="workspace" id="dropZone">
+    <div class="torrent-list" id="torrentList" onclick="onListBackgroundClick(event)"></div>
+
+    <!-- Inspector Drawer -->
+    <div class="inspector" id="inspectorPanel">
+      <div class="insp-header">
+        <span id="inspTitle">Torrent Properties</span>
+        <button class="btn" onclick="toggleInspector(false)">✕</button>
+      </div>
+      <div class="insp-tabs">
+        <div class="insp-tab active" onclick="switchInspTab('activity', this)">Activity</div>
+        <div class="insp-tab" onclick="switchInspTab('info', this)">Info</div>
+        <div class="insp-tab" onclick="switchInspTab('peers', this)">Peers</div>
+        <div class="insp-tab" onclick="switchInspTab('trackers', this)">Trackers</div>
+        <div class="insp-tab" onclick="switchInspTab('files', this)">Files</div>
+      </div>
+      <div class="insp-content" id="inspContent">Select a torrent to view its details.</div>
+    </div>
+  </div>
+
+  <!-- Bottom Status Bar -->
+  <div class="statusbar">
+    <button class="status-btn" title="Preferences" onclick="openPrefsModal()">≡</button>
+    <button class="status-btn" id="btnAltSpeed" title="Alternative Speed Limits (Turtle Mode)" onclick="toggleAltSpeed()">🐢</button>
+    <span id="lblTorrentCount">0 torrents</span>
+    <div class="status-right">
+      <span id="lblDownSpeed"></span>
+      <span id="lblUpSpeed"></span>
+      <span id="lblRatio">Ratio: 0.00</span>
+      <button class="status-btn" title="Statistics" onclick="openStatsModal()">◐</button>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div class="ctx-menu" id="ctxMenu">
+    <div class="dropdown-entry" onclick="toggleInspector(true)">Properties...</div>
+    <div class="dropdown-sep"></div>
+    <div class="dropdown-entry" onclick="startSelected(false)">Start</div>
+    <div class="dropdown-entry" onclick="startSelected(true)">Start Now</div>
+    <div class="dropdown-entry" onclick="pauseSelected()">Pause</div>
+    <div class="dropdown-sep"></div>
+    <div class="dropdown-entry" onclick="verifySelected()">Verify Local Data</div>
+    <div class="dropdown-entry" onclick="reannounceSelected()">Ask Tracker for More Peers</div>
+    <div class="dropdown-entry" onclick="relocateSelected()">Set Location...</div>
+    <div class="dropdown-entry" onclick="copyMagnetSelected()">Copy Magnet Link</div>
+    <div class="dropdown-sep"></div>
+    <div class="dropdown-entry" onclick="removeSelected(false)">Remove</div>
+    <div class="dropdown-entry" onclick="removeSelected(true)">Delete Files and Remove</div>
+  </div>
+
+  <!-- Open Torrent File Modal -->
+  <div class="modal-backdrop" id="modalFile">
+    <div class="modal">
+      <div class="modal-header"><span>Open Torrent File</span><button class="btn" onclick="closeModal('modalFile')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>Select .torrent file:</label>
+          <input type="file" id="inpTorrentFile" accept=".torrent" />
+        </div>
+        <div class="form-row">
+          <label>Destination folder:</label>
+          <input type="text" id="inpFileDestDir" />
+        </div>
+        <label><input type="checkbox" id="chkFileStart" checked /> Start when added</label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('modalFile')">Cancel</button>
+        <button class="btn primary" onclick="submitTorrentFile()">Open</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Open URL / Magnet Modal -->
+  <div class="modal-backdrop" id="modalUrl">
+    <div class="modal">
+      <div class="modal-header"><span>Open URL or Magnet Link</span><button class="btn" onclick="closeModal('modalUrl')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>Torrent URL or magnet: link:</label>
+          <input type="text" id="inpMagnetUrl" placeholder="magnet:?xt=urn:btih:..." />
+        </div>
+        <div class="form-row">
+          <label>Destination folder:</label>
+          <input type="text" id="inpUrlDestDir" />
+        </div>
+        <label><input type="checkbox" id="chkUrlStart" checked /> Start when added</label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('modalUrl')">Cancel</button>
+        <button class="btn primary" onclick="submitMagnetUrl()">Open</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preferences Modal -->
+  <div class="modal-backdrop" id="modalPrefs">
+    <div class="modal">
+      <div class="modal-header"><span>Transmission Preferences</span><button class="btn" onclick="closeModal('modalPrefs')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label>Default Download Directory:</label>
+          <input type="text" id="prefDownloadDir" />
+        </div>
+        <div style="display:flex; gap:12px;">
+          <div class="form-row" style="flex:1;">
+            <label><input type="checkbox" id="prefDownLimEn" /> Limit Download (KB/s):</label>
+            <input type="number" id="prefDownLim" value="100" />
+          </div>
+          <div class="form-row" style="flex:1;">
+            <label><input type="checkbox" id="prefUpLimEn" /> Limit Upload (KB/s):</label>
+            <input type="number" id="prefUpLim" value="100" />
+          </div>
+        </div>
+        <div style="display:flex; gap:12px;">
+          <div class="form-row" style="flex:1;">
+            <label>Alt Download (KB/s):</label>
+            <input type="number" id="prefAltDown" value="50" />
+          </div>
+          <div class="form-row" style="flex:1;">
+            <label>Alt Upload (KB/s):</label>
+            <input type="number" id="prefAltUp" value="50" />
+          </div>
+        </div>
+        <div style="display:flex; gap:12px;">
+          <div class="form-row" style="flex:1;">
+            <label><input type="checkbox" id="prefRatioEn" /> Seed Ratio Limit:</label>
+            <input type="number" step="0.1" id="prefRatioLim" value="2.0" />
+          </div>
+          <div class="form-row" style="flex:1;">
+            <label>Listening Peer Port:</label>
+            <input type="number" id="prefPeerPort" value="51413" />
+          </div>
+        </div>
+        <label><input type="checkbox" id="prefDht" checked /> Enable DHT (Distributed Hash Table)</label>
+        <label><input type="checkbox" id="prefPex" checked /> Enable PEX (Peer Exchange)</label>
+        <label><input type="checkbox" id="prefUtp" checked /> Enable µTP</label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('modalPrefs')">Cancel</button>
+        <button class="btn primary" onclick="savePreferences()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Statistics Modal -->
+  <div class="modal-backdrop" id="modalStats">
+    <div class="modal">
+      <div class="modal-header"><span>Statistics</span><button class="btn" onclick="closeModal('modalStats')">✕</button></div>
+      <div class="modal-body" id="statsModalBody">Loading...</div>
+      <div class="modal-footer"><button class="btn primary" onclick="closeModal('modalStats')">Close</button></div>
+    </div>
+  </div>
+
+  <script>
+    let sessionId = '';
+    let sessionConfig = {};
+    let sessionStats = {};
+    let allTorrents = [];
+    let selectedIds = new Set();
+    let compactView = true;
+    let sortMode = 'queue';
+    let reverseSort = false;
+    let currentInspTab = 'activity';
+
+    async function rpcCall(method, args = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (sessionId) headers['X-Transmission-Session-Id'] = sessionId;
+      let res = await fetch('/transmission/rpc', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ method, arguments: args })
+      });
+      if (res.status === 409) {
+        sessionId = res.headers.get('X-Transmission-Session-Id') || '';
+        headers['X-Transmission-Session-Id'] = sessionId;
+        res = await fetch('/transmission/rpc', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ method, arguments: args })
+        });
+      }
+      return await res.json();
+    }
+
+    function fmtSize(b) {
+      if (!b || b <= 0) return '0 B';
+      const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let i = 0, v = b;
+      while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+      return (i === 0 ? v : v.toFixed(v < 10 ? 2 : 1)) + ' ' + u[i];
+    }
+    function fmtSpeed(bps) { return (!bps || bps <= 0) ? '0 B/s' : fmtSize(bps) + '/s'; }
+    function fmtRatio(r) { return (r === undefined || r < 0) ? '0.00' : Number(r).toFixed(2); }
+    function fmtPct(p) {
+      const v = Math.min(100, Math.max(0, (p || 0) * 100));
+      return v >= 99.99 ? '100%' : v.toFixed(1) + '%';
+    }
+
+    function shortStatus(t) {
+      if (t.error) return 'Error';
+      switch (t.status) {
+        case 0: return t.isFinished ? 'Finished' : 'Paused';
+        case 1: case 2: return 'Verifying (' + fmtPct(t.percentDone) + ')';
+        case 3: return 'Queued';
+        case 4: {
+          const parts = [];
+          if (t.rateDownload > 0) parts.push('Down: ' + fmtSpeed(t.rateDownload));
+          if (t.rateUpload > 0) parts.push('Up: ' + fmtSpeed(t.rateUpload));
+          return parts.length ? parts.join('  ') : 'Idle';
+        }
+        case 5: case 6:
+          return t.rateUpload > 0
+            ? `Ratio: ${fmtRatio(t.uploadRatio)}, Up: ${fmtSpeed(t.rateUpload)}`
+            : `Ratio: ${fmtRatio(t.uploadRatio)}`;
+        default: return '';
+      }
+    }
+
+    function fullStatus(t) {
+      if (t.error) return 'Error: ' + t.errorString;
+      switch (t.status) {
+        case 0: return t.isFinished ? 'Finished' : 'Paused';
+        case 2: return `Verifying local data (${fmtPct(t.percentDone)} tested)`;
+        case 4: return `Downloading from ${t.peersSendingToUs || 0} of ${t.peersConnected || 0} peers - Down: ${fmtSpeed(t.rateDownload)}  Up: ${fmtSpeed(t.rateUpload)}`;
+        case 6: return `Seeding to ${t.peersGettingFromUs || 0} of ${t.peersConnected || 0} peers - Up: ${fmtSpeed(t.rateUpload)}`;
+        default: return shortStatus(t);
+      }
+    }
+
+    function barColors(t) {
+      if (t.error) return ['var(--bar-red-fill)', 'var(--bar-red-back)', 'var(--bar-red-border)'];
+      if (t.status === 0) return ['var(--bar-gray-fill)', 'var(--bar-gray-back)', 'var(--bar-gray-border)'];
+      if (t.status === 6 || t.percentDone >= 0.9999) return ['var(--bar-green-fill)', 'var(--bar-green-back)', 'var(--bar-green-border)'];
+      return ['var(--bar-blue-fill)', 'var(--bar-blue-back)', 'var(--bar-blue-border)'];
+    }
+
+    function matchesFilter(t) {
+      const st = document.getElementById('selStateFilter').value;
+      if (st === 'active' && !(t.rateDownload > 0 || t.rateUpload > 0)) return false;
+      if (st === 'downloading' && !(t.status === 3 || t.status === 4)) return false;
+      if (st === 'seeding' && !(t.status === 5 || t.status === 6)) return false;
+      if (st === 'paused' && t.status !== 0) return false;
+      if (st === 'finished' && !t.isFinished) return false;
+      if (st === 'error' && !t.error) return false;
+
+      const q = document.getElementById('edtSearch').value.trim().toLowerCase();
+      if (q && !t.name.toLowerCase().includes(q)) return false;
+      return true;
+    }
+
+    function renderTorrents() {
+      const listEl = document.getElementById('torrentList');
+      const filtered = allTorrents.filter(matchesFilter);
+
+      filtered.sort((a, b) => {
+        let cmp = 0;
+        if (sortMode === 'queue') cmp = (a.queuePosition || 0) - (b.queuePosition || 0);
+        else if (sortMode === 'activity') cmp = ((b.rateDownload + b.rateUpload) - (a.rateDownload + a.rateUpload));
+        else if (sortMode === 'name') cmp = a.name.localeCompare(b.name);
+        else if (sortMode === 'progress') cmp = a.percentDone - b.percentDone;
+        else if (sortMode === 'ratio') cmp = (b.uploadRatio || 0) - (a.uploadRatio || 0);
+        else if (sortMode === 'size') cmp = (b.totalSize || 0) - (a.totalSize || 0);
+        return reverseSort ? -cmp : cmp;
+      });
+
+      listEl.innerHTML = filtered.map(t => {
+        const isSel = selectedIds.has(t.id);
+        const cls = ['torrent-row', compactView ? 'compact' : 'full'];
+        if (isSel) cls.push('selected');
+        if (t.status === 0) cls.push('paused');
+        if (t.error) cls.push('error');
+        const [fillCol, backCol, borderCol] = barColors(t);
+        const pct = Math.round(Math.min(100, Math.max(0, (t.percentDone || 0) * 100)));
+
+        if (compactView) {
+          return `<div class="${cls.join(' ')}" onclick="onRowClick(event, ${t.id})" ondblclick="toggleInspector(true)" oncontextmenu="onRowContextMenu(event, ${t.id})">
+            <div class="t-icon">🎬</div>
+            <div class="t-name">${escapeHtml(t.name)}</div>
+            <div class="t-short-status">${escapeHtml(shortStatus(t))}</div>
+            <div class="pbar-compact" style="background:${backCol};border-color:${borderCol}">
+              <div class="pbar-fill" style="width:${pct}%;background:${fillCol}"></div>
+              <div class="pbar-text">${pct}%</div>
+            </div>
+          </div>`;
+        } else {
+          const sum = `${fmtSize(t.totalSize)}, uploaded ${fmtSize(t.uploadedEver)} (Ratio: ${fmtRatio(t.uploadRatio)})`;
+          return `<div class="${cls.join(' ')}" onclick="onRowClick(event, ${t.id})" ondblclick="toggleInspector(true)" oncontextmenu="onRowContextMenu(event, ${t.id})">
+            <div class="t-icon" style="font-size:20px">🎬</div>
+            <div class="full-body">
+              <div class="full-title t-name">${escapeHtml(t.name)}</div>
+              <div class="full-sub">${escapeHtml(fullStatus(t))}</div>
+              <div class="pbar-full" style="background:${backCol};border-color:${borderCol}">
+                <div class="pbar-fill" style="width:${pct}%;background:${fillCol}"></div>
+              </div>
+              <div class="full-sub">${escapeHtml(sum)}</div>
+            </div>
+          </div>`;
+        }
+      }).join('');
+
+      const hasSel = selectedIds.size > 0;
+      document.getElementById('btnStart').disabled = !hasSel;
+      document.getElementById('btnPause').disabled = !hasSel;
+      document.getElementById('btnRemove').disabled = !hasSel;
+      document.getElementById(' lblTorrentCount'?.trim() || 'lblTorrentCount').textContent =
+        filtered.length !== allTorrents.length
+          ? `${filtered.length} of ${allTorrents.length} torrents`
+          : `${allTorrents.length} torrent${allTorrents.length === 1 ? '' : 's'}`;
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function onRowClick(e, id) {
+      e.stopPropagation();
+      document.getElementById('ctxMenu').style.display = 'none';
+      if (e.ctrlKey || e.metaKey) {
+        if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+      } else {
+        selectedIds.clear();
+        selectedIds.add(id);
+      }
+      renderTorrents();
+      if (document.getElementById('inspectorPanel').classList.contains('open')) refreshInspector();
+    }
+
+    function onListBackgroundClick(e) {
+      if (e.target.id === 'torrentList') {
+        selectedIds.clear();
+        renderTorrents();
+      }
+      document.getElementById('ctxMenu').style.display = 'none';
+    }
+
+    function onRowContextMenu(e, id) {
+      e.preventDefault();
+      if (!selectedIds.has(id)) {
+        selectedIds.clear();
+        selectedIds.add(id);
+        renderTorrents();
+      }
+      const m = document.getElementById('ctxMenu');
+      m.style.left = Math.min(window.innerWidth - 220, e.clientX) + 'px';
+      m.style.top = Math.min(window.innerHeight - 280, e.clientY) + 'px';
+      m.style.display = 'block';
+    }
+    window.addEventListener('click', () => document.getElementById('ctxMenu').style.display = 'none');
+
+    async function pollAll() {
+      try {
+        const [torRes, statRes] = await Promise.all([
+          rpcCall('torrent-get', {
+            fields: ['id','name','hashString','status','percentDone','totalSize','sizeWhenDone',
+                     'leftUntilDone','rateDownload','rateUpload','uploadRatio','uploadedEver',
+                     'downloadedEver','eta','peersConnected','peersSendingToUs','peersGettingFromUs',
+                     'error','errorString','downloadDir','isFinished','queuePosition','magnetLink']
+          }),
+          rpcCall('session-stats')
+        ]);
+        if (torRes.result === 'success') allTorrents = torRes.arguments.torrents || [];
+        if (statRes.result === 'success') {
+          sessionStats = statRes.arguments || {};
+          document.getElementById('lblDownSpeed').textContent = sessionStats.downloadSpeed > 0 ? '▼ ' + fmtSpeed(sessionStats.downloadSpeed) : '';
+          document.getElementById('lblUpSpeed').textContent = sessionStats.uploadSpeed > 0 ? '▲ ' + fmtSpeed(sessionStats.uploadSpeed) : '';
+          const tot = sessionStats['cumulative-stats'] || {};
+          const ratio = tot.downloadedBytes > 0 ? (tot.uploadedBytes / tot.downloadedBytes) : 0;
+          document.getElementById('lblRatio').textContent = 'Ratio: ' + fmtRatio(ratio);
+        }
+        renderTorrents();
+        if (document.getElementById('inspectorPanel').classList.contains('open')) refreshInspector();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    async function loadSessionConfig() {
+      const res = await rpcCall('session-get');
+      if (res.result === 'success') {
+        sessionConfig = res.arguments || {};
+        document.getElementById('btnAltSpeed').classList.toggle('active', !!sessionConfig['alt-speed-enabled']);
+        document.getElementById('inpFileDestDir').value = sessionConfig['download-dir'] || '';
+        document.getElementById('inpUrlDestDir').value = sessionConfig['download-dir'] || '';
+      }
+    }
+
+    async function rpcAction(method, ids, extra = {}) {
+      const args = Object.assign({}, extra);
+      if (ids && ids.length) args.ids = ids;
+      await rpcCall(method, args);
+      await pollAll();
+    }
+
+    function getSelArray() { return Array.from(selectedIds); }
+    function startSelected(now) { rpcAction(now ? 'torrent-start-now' : 'torrent-start', getSelArray()); }
+    function pauseSelected() { rpcAction('torrent-stop', getSelArray()); }
+    function verifySelected() { rpcAction('torrent-verify', getSelArray()); }
+    function reannounceSelected() { rpcAction('torrent-reannounce', getSelArray()); }
+    function removeSelected(del) {
+      const ids = getSelArray();
+      if (!ids.length) return;
+      if (confirm(del ? `Delete ${ids.length} torrent(s) AND their local files?` : `Remove ${ids.length} torrent(s) from list?`)) {
+        rpcAction('torrent-remove', ids, { 'delete-local-data': !!del });
+        selectedIds.clear();
+      }
+    }
+    function relocateSelected() {
+      const ids = getSelArray();
+      if (!ids.length) return;
+      const first = allTorrents.find(t => t.id === ids[0]);
+      const loc = prompt('Enter new folder location:', first ? first.downloadDir : '');
+      if (loc) rpcAction('torrent-set-location', ids, { location: loc, move: true });
+    }
+    function copyMagnetSelected() {
+      const ids = getSelArray();
+      const first = allTorrents.find(t => t.id === ids[0]);
+      if (first && first.magnetLink) navigator.clipboard.writeText(first.magnetLink);
+    }
+    function selectAllTorrents() { allTorrents.forEach(t => selectedIds.add(t.id)); renderTorrents(); }
+    function deselectAllTorrents() { selectedIds.clear(); renderTorrents(); }
+    function toggleCompactView() {
+      compactView = !compactView;
+      document.getElementById('mnuCompactLabel').textContent = (compactView ? '✓ ' : '') + 'Compact View';
+      renderTorrents();
+    }
+    function toggleDarkMode() { document.body.classList.toggle('dark'); }
+    function setSort(m) { sortMode = m; renderTorrents(); }
+    function toggleReverseSort() { reverseSort = !reverseSort; renderTorrents(); }
+    async function toggleAltSpeed() {
+      const next = !sessionConfig['alt-speed-enabled'];
+      await rpcCall('session-set', { 'alt-speed-enabled': next });
+      await loadSessionConfig();
+    }
+
+    function toggleInspector(forceOpen) {
+      const p = document.getElementById('inspectorPanel');
+      const open = forceOpen !== undefined ? forceOpen : !p.classList.contains('open');
+      p.classList.toggle('open', open);
+      document.getElementById('btnProps').classList.toggle('active', open);
+      if (open) refreshInspector();
+    }
+    function switchInspTab(tab, el) {
+      currentInspTab = tab;
+      document.querySelectorAll('.insp-tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      refreshInspector();
+    }
+    async function refreshInspector() {
+      const ids = getSelArray();
+      const box = document.getElementById('inspContent');
+      if (!ids.length) { box.innerHTML = 'Select a torrent to view its properties.'; return; }
+      const res = await rpcCall('torrent-get', {
+        ids: [ids[0]],
+        fields: ['id','name','hashString','status','percentDone','totalSize','sizeWhenDone',
+                 'uploadedEver','downloadedEver','uploadRatio','rateDownload','rateUpload',
+                 'pieceCount','pieceSize','creator','comment','downloadDir','errorString',
+                 'files','fileStats','peers','trackerStats']
+      });
+      if (res.result !== 'success' || !res.arguments.torrents.length) return;
+      const t = res.arguments.torrents[0];
+      document.getElementById('inspTitle').textContent = t.name;
+
+      if (currentInspTab === 'activity') {
+        box.innerHTML = `
+          <div class="kv-row"><div class="kv-key">Progress:</div><div class="kv-val">${fmtPct(t.percentDone)} (${fmtSize(t.sizeWhenDone)})</div></div>
+          <div class="kv-row"><div class="kv-key">Downloaded:</div><div class="kv-val">${fmtSize(t.downloadedEver)}</div></div>
+          <div class="kv-row"><div class="kv-key">Uploaded:</div><div class="kv-val">${fmtSize(t.uploadedEver)} (Ratio: ${fmtRatio(t.uploadRatio)})</div></div>
+          <div class="kv-row"><div class="kv-key">State:</div><div class="kv-val">${escapeHtml(fullStatus(t))}</div></div>
+          <div class="kv-row"><div class="kv-key">Download Speed:</div><div class="kv-val">${fmtSpeed(t.rateDownload)}</div></div>
+          <div class="kv-row"><div class="kv-key">Upload Speed:</div><div class="kv-val">${fmtSpeed(t.rateUpload)}</div></div>
+          <div class="kv-row"><div class="kv-key">Error:</div><div class="kv-val">${escapeHtml(t.errorString || 'None')}</div></div>`;
+      } else if (currentInspTab === 'info') {
+        box.innerHTML = `
+          <div class="kv-row"><div class="kv-key">Total Size:</div><div class="kv-val">${fmtSize(t.totalSize)} (${t.pieceCount || 0} pieces @ ${fmtSize(t.pieceSize)})</div></div>
+          <div class="kv-row"><div class="kv-key">Hash:</div><div class="kv-val">${escapeHtml(t.hashString)}</div></div>
+          <div class="kv-row"><div class="kv-key">Location:</div><div class="kv-val">${escapeHtml(t.downloadDir)}</div></div>
+          <div class="kv-row"><div class="kv-key">Creator:</div><div class="kv-val">${escapeHtml(t.creator)}</div></div>
+          <div class="kv-row"><div class="kv-key">Comment:</div><div class="kv-val">${escapeHtml(t.comment)}</div></div>`;
+      } else if (currentInspTab === 'peers') {
+        const peers = t.peers || [];
+        box.innerHTML = `<table class="grid-table"><thead><tr><th>Address</th><th>Client</th><th>%</th><th>Down</th><th>Up</th></tr></thead><tbody>` +
+          peers.map(p => `<tr><td>${escapeHtml(p.address)}:${p.port}</td><td>${escapeHtml(p.clientName)}</td><td>${fmtPct(p.progress)}</td><td>${fmtSpeed(p.rateToClient)}</td><td>${fmtSpeed(p.rateToPeer)}</td></tr>`).join('') +
+          `</tbody></table>`;
+      } else if (currentInspTab === 'trackers') {
+        const trks = t.trackerStats || [];
+        box.innerHTML = `<table class="grid-table"><thead><tr><th>Tier</th><th>Tracker URL</th><th>Status</th><th>Seeds</th></tr></thead><tbody>` +
+          trks.map(k => `<tr><td>${(k.tier || 0) + 1}</td><td>${escapeHtml(k.announce)}</td><td>${escapeHtml(k.lastAnnounceResult)}</td><td>${k.seederCount >= 0 ? k.seederCount : '-'}</td></tr>`).join('') +
+          `</tbody></table>`;
+      } else if (currentInspTab === 'files') {
+        const files = t.files || [];
+        const stats = t.fileStats || [];
+        box.innerHTML = `<table class="grid-table"><thead><tr><th>On</th><th>File Name</th><th>Size</th><th>%</th></tr></thead><tbody>` +
+          files.map((f, idx) => {
+            const w = stats[idx] ? stats[idx].wanted : true;
+            const p = f.length > 0 ? f.bytesCompleted / f.length : 1;
+            return `<tr><td><input type="checkbox" ${w ? 'checked' : ''} onchange="toggleFileWanted(${t.id}, ${idx}, this.checked)"/></td><td>${escapeHtml(f.name)}</td><td>${fmtSize(f.length)}</td><td>${fmtPct(p)}</td></tr>`;
+          }).join('') + `</tbody></table>`;
+      }
+    }
+
+    async function toggleFileWanted(torId, fileIdx, wanted) {
+      const args = { ids: [torId] };
+      args[wanted ? 'files-wanted' : 'files-unwanted'] = [fileIdx];
+      await rpcCall('torrent-set', args);
+    }
+
+    function openFileModal() { document.getElementById('modalFile').classList.add('open'); }
+    function openUrlModal() { document.getElementById('modalUrl').classList.add('open'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+    async function submitTorrentFile() {
+      const inp = document.getElementById('inpTorrentFile');
+      if (!inp.files.length) return;
+      const file = inp.files[0];
+      const buf = await file.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let bin = '';
+      for (let i = 0; i < bytes.byteLength; i++) bin += String.fromCharCode(bytes[i]);
+      const b64 = btoa(bin);
+      await rpcCall('torrent-add', {
+        metainfo: b64,
+        'download-dir': document.getElementById('inpFileDestDir').value.trim(),
+        paused: !document.getElementById('chkFileStart').checked
+      });
+      closeModal('modalFile');
+      await pollAll();
+    }
+
+    async function submitMagnetUrl() {
+      const url = document.getElementById('inpMagnetUrl').value.trim();
+      if (!url) return;
+      await rpcCall('torrent-add', {
+        filename: url,
+        'download-dir': document.getElementById('inpUrlDestDir').value.trim(),
+        paused: !document.getElementById('chkUrlStart').checked
+      });
+      closeModal('modalUrl');
+      await pollAll();
+    }
+
+    async function openPrefsModal() {
+      await loadSessionConfig();
+      document.getElementById('prefDownloadDir').value = sessionConfig['download-dir'] || '';
+      document.getElementById('prefDownLimEn').checked = !!sessionConfig['speed-limit-down-enabled'];
+      document.getElementById('prefDownLim').value = sessionConfig['speed-limit-down'] || 100;
+      document.getElementById('prefUpLimEn').checked = !!sessionConfig['speed-limit-up-enabled'];
+      document.getElementById('prefUpLim').value = sessionConfig['speed-limit-up'] || 100;
+      document.getElementById('prefAltDown').value = sessionConfig['alt-speed-down'] || 50;
+      document.getElementById('prefAltUp').value = sessionConfig['alt-speed-up'] || 50;
+      document.getElementById('prefRatioEn').checked = !!sessionConfig['seedRatioLimited'];
+      document.getElementById('prefRatioLim').value = sessionConfig['seedRatioLimit'] || 2.0;
+      document.getElementById('prefPeerPort').value = sessionConfig['peer-port'] || 51413;
+      document.getElementById('prefDht').checked = !!sessionConfig['dht-enabled'];
+      document.getElementById('prefPex').checked = !!sessionConfig['pex-enabled'];
+      document.getElementById('prefUtp').checked = !!sessionConfig['utp-enabled'];
+      document.getElementById('modalPrefs').classList.add('open');
+    }
+
+    async function savePreferences() {
+      await rpcCall('session-set', {
+        'download-dir': document.getElementById('prefDownloadDir').value.trim(),
+        'speed-limit-down-enabled': document.getElementById('prefDownLimEn').checked,
+        'speed-limit-down': Number(document.getElementById('prefDownLim').value),
+        'speed-limit-up-enabled': document.getElementById('prefUpLimEn').checked,
+        'speed-limit-up': Number(document.getElementById('prefUpLim').value),
+        'alt-speed-down': Number(document.getElementById('prefAltDown').value),
+        'alt-speed-up': Number(document.getElementById('prefAltUp').value),
+        'seedRatioLimited': document.getElementById('prefRatioEn').checked,
+        'seedRatioLimit': Number(document.getElementById('prefRatioLim').value),
+        'peer-port': Number(document.getElementById('prefPeerPort').value),
+        'dht-enabled': document.getElementById('prefDht').checked,
+        'pex-enabled': document.getElementById('prefPex').checked,
+        'utp-enabled': document.getElementById('prefUtp').checked
+      });
+      closeModal('modalPrefs');
+      await loadSessionConfig();
+    }
+
+    async function openStatsModal() {
+      await pollAll();
+      const cur = sessionStats['current-stats'] || {};
+      const tot = sessionStats['cumulative-stats'] || {};
+      document.getElementById('statsModalBody').innerHTML = `
+        <h4>Current Session</h4>
+        <div class="kv-row"><div class="kv-key">Uploaded:</div><div class="kv-val">${fmtSize(cur.uploadedBytes)}</div></div>
+        <div class="kv-row"><div class="kv-key">Downloaded:</div><div class="kv-val">${fmtSize(cur.downloadedBytes)}</div></div>
+        <hr style="border-color:var(--border-col);margin:6px 0"/>
+        <h4>Total (${tot.sessionCount || 0} sessions)</h4>
+        <div class="kv-row"><div class="kv-key">Uploaded:</div><div class="kv-val">${fmtSize(tot.uploadedBytes)}</div></div>
+        <div class="kv-row"><div class="kv-key">Downloaded:</div><div class="kv-val">${fmtSize(tot.downloadedBytes)}</div></div>`;
+      document.getElementById('modalStats').classList.add('open');
+    }
+
+    loadSessionConfig().then(pollAll);
+    setInterval(pollAll, 1500);
+  </script>
+</body>
+</html>
