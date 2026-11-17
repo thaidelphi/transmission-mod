@@ -1,3 +1,30 @@
+{******************************************************************************
+ * ยูนิต: uMain.pas
+ * คำอธิบาย:
+ *   หน้าต่างหลักของโปรแกรม (TMainForm) ถอดแบบการทำงานและรูปลักษณ์มาจาก `MainWindow.cc`
+ *   และ `TorrentDelegate.cc` / `TorrentDelegateMin.cc` ของ `transmission-qt`:
+ *
+ *   ส่วนประกอบหลักของหน้าต่าง:
+ *   1. Main Menu (`File`, `Edit`, `Torrent`, `View`, `Help`) พร้อมคีย์ลัดมาตรฐานครบทุกตัว
+ *   2. Toolbar ด้านบน วาดไอคอนแบบ Vector ลงบน TBitmap คมชัดทุกความละเอียด:
+ *      - Open File, Open URL, Start, Pause, Remove, Properties, Open Web UI
+ *   3. Filter Bar:
+ *      - ตัวกรองสถานะ (`Show: All, Active, Downloading, Seeding, Paused, Finished, Verifying, Error`)
+ *        พร้อมแสดงจำนวนทอร์เรนต์ในแต่ละหมวดหมู่แบบเรียลไทม์
+ *      - ตัวกรองตามโดเมนของ Tracker (`FCmbTracker`)
+ *      - ช่องค้นหาชื่อทอร์เรนต์แบบทันที (`FEdtSearch`)
+ *   4. รายการทอร์เรนต์แบบ Owner-Draw (`FLstTorrents`):
+ *      - รองรับทั้งโหมด **Compact View** (แสดงไอคอน, ชื่อไฟล์, Ratio และหลอดเปอร์เซ็นต์สีเขียว/ฟ้าในบรรทัดเดียว)
+ *      - และโหมด **Full View** (แสดงรายละเอียด 4 บรรทัดต่อรายการ)
+ *      - รองรับการลากไฟล์ `.torrent` มาวางในหน้าต่าง (Drag & Drop)
+ *   5. Status Bar ด้านล่าง:
+ *      - ปุ่มเมนูตั้งค่าด่วน (`≡`), ปุ่มเปิด/ปิดโหมดเต่า Turtle Mode, จำนวนทอร์เรนต์,
+ *        ความเร็ว Down / Up ปัจจุบัน และค่า Ratio สะสม
+ *   6. System Tray Icon (`FTrayIcon`):
+ *      - แสดงไอคอนที่มุมขวาล่างของทาสก์บาร์ พร้อมแจ้งเตือน Balloon Notification เมื่อโหลดเสร็จ
+ *   7. Embedded Web Server (`FWebServer`):
+ *      - เปิดเว็บเซิร์ฟเวอร์ในตัวที่พอร์ต 9092 เพื่อให้ควบคุมผ่านเบราว์เซอร์ได้ทันที
+ ******************************************************************************}
 unit uMain;
 
 {$mode objfpc}{$H+}
@@ -177,6 +204,7 @@ var
   ActiveSortMode: TSortMode = smQueue;
   ActiveReverseSort: Boolean = False;
 
+{ ฟังก์ชันเปรียบเทียบลำดับของทอร์เรนต์ 2 รายการสำหรับใช้กับ TList.Sort ตามโหมด ActiveSortMode }
 function CompareTorrents(Item1, Item2: Pointer): Integer;
 var
   A, B: TTorrentItem;
@@ -228,11 +256,13 @@ end;
 
 { TMainForm }
 
+{ คืนค่าพาธของไฟล์ตั้งค่า transmission_laz.ini ที่วางอยู่คู่กับไฟล์ .exe }
 function TMainForm.GetConfigIniPath: string;
 begin
   Result := ChangeFileExt(ParamStr(0), '.ini');
 end;
 
+{ โหลดค่าตั้งค่าหน้าต่าง โหมดการแสดงผล และการตั้งค่า Session/WebUI จากไฟล์ .ini }
 procedure TMainForm.LoadAppSettings;
 var
   Ini: TIniFile;
@@ -286,6 +316,7 @@ begin
   end;
 end;
 
+{ บันทึกค่าตั้งค่าหน้าต่าง โหมดการแสดงผล และการเชื่อมต่อลงไฟล์ .ini เมื่อมีการเปลี่ยนแปลงหรือปิดโปรแกรม }
 procedure TMainForm.SaveAppSettings;
 var
   Ini: TIniFile;
@@ -967,6 +998,7 @@ begin
   FLstTorrents.OnKeyDown := @LstTorrentsKeyDown;
 end;
 
+{ วาดไอคอนไฟล์ขนาดเล็กด้านซ้ายของชื่อทอร์เรนต์ (เปลี่ยนสีตามสถานะ ปกติ / หยุดชั่วคราว / มีข้อผิดพลาด) }
 procedure TMainForm.DrawFileIcon(C: TCanvas; R: TRect; IsPaused, HasErr: Boolean);
 var
   BorderCol, FillCol, AccCol: TColor;
@@ -1011,6 +1043,7 @@ begin
   ]);
 end;
 
+{ เมธอด Owner-Draw สำหรับวาดแต่ละแถวในรายการทอร์เรนต์ (รองรับทั้งโหมด Compact View และ Full View 4 บรรทัด) }
 procedure TMainForm.LstTorrentsDrawItem(Control: TWinControl; Index: Integer;
   ARect: TRect; State: TOwnerDrawState);
 var
@@ -1238,6 +1271,7 @@ begin
       Exit(TTorrentItem(FFilteredTorrents[I]));
 end;
 
+{ ตรวจสอบว่าทอร์เรนต์ T ตรงตามเงื่อนไขตัวกรองสถานะ (Show:), Tracker และคำค้นหา (Search...) หรือไม่ }
 function TMainForm.MatchesFilter(T: TTorrentItem): Boolean;
 var
   StateIdx: Integer;
@@ -1284,6 +1318,7 @@ begin
   Result := True;
 end;
 
+{ อัปเดตตัวเลขจำนวนทอร์เรนต์ในแต่ละสถานะท้ายรายการ Dropdown ของช่อง Show: เช่น "Seeding (1)" }
 procedure TMainForm.UpdateStateFilterCounts;
 var
   CntActive, CntDown, CntSeed, CntPaused, CntFin, CntVer, CntErr: Integer;

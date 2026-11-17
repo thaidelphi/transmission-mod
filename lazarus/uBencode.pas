@@ -1,3 +1,16 @@
+{******************************************************************************
+ * ยูนิต: uBencode.pas
+ * คำอธิบาย:
+ *   ตัวแยกวิเคราะห์โครงสร้างไฟล์ .torrent (BitTorrent Bencode Parser) เขียนด้วย FreePascal
+ *   ใช้สำหรับอ่านข้อมูลเมตาของไฟล์ .torrent ทันทีที่ผู้ใช้เลือกไฟล์ในหน้าต่าง Open Torrent
+ *   เพื่อแสดงรายชื่อไฟล์ย่อย ขนาดไฟล์ จำนวน Pieces และรายชื่อ Trackers ก่อนกดเริ่มดาวน์โหลด
+ *
+ * รูปแบบข้อมูล Bencode ตามมาตรฐาน BEP 3:
+ *   - Integer:    i<ตัวเลข>e          เช่น i42e = 42
+ *   - ByteString: <ความยาว>:<ข้อมูล>  เช่น 4:spam = "spam"
+ *   - List:       l<สมาชิก...>e       เช่น l4:spami42ee
+ *   - Dictionary: d<คีย์><ค่า>...e     เช่น d3:bar4:spam3:fooi42ee
+ ******************************************************************************}
 unit uBencode;
 
 {$mode objfpc}{$H+}
@@ -8,40 +21,45 @@ uses
   Classes, SysUtils;
 
 type
+  { โครงสร้างเก็บข้อมูลไฟล์ย่อยที่สกัดได้จากไฟล์ .torrent }
   TBencodeMetaFile = record
-    Path: string;
-    Length: Int64;
+    Path: string;   // พาธของไฟล์ภายในทอร์เรนต์
+    Length: Int64;  // ขนาดของไฟล์ (Bytes)
   end;
 
+  { โครงสร้างเก็บข้อมูลภาพรวมของไฟล์ .torrent ที่ถอดรหัสแล้ว }
   TTorrentMetaPreview = record
-    Valid: Boolean;
-    Name: string;
-    Comment: string;
-    CreatedBy: string;
-    CreationDate: Int64;
-    PieceLength: Int64;
-    PieceCount: Integer;
-    TotalSize: Int64;
-    IsPrivate: Boolean;
-    Trackers: array of string;
-    Files: array of TBencodeMetaFile;
+    Valid: Boolean;                       // ถอดรหัสสำเร็จและเป็นไฟล์ .torrent ที่ถูกต้องหรือไม่
+    Name: string;                         // ชื่อหลักของทอร์เรนต์ (จาก info.name.utf-8 หรือ info.name)
+    Comment: string;                      // ข้อความหมายเหตุ (comment)
+    CreatedBy: string;                    // ชื่อโปรแกรมที่สร้างไฟล์ .torrent (created by)
+    CreationDate: Int64;                  // เวลาที่สร้างไฟล์ (Unix Timestamp)
+    PieceLength: Int64;                   // ขนาดของแต่ละ Piece (Bytes)
+    PieceCount: Integer;                  // จำนวน Pieces ทั้งหมด (คำนวณจากความยาวสตริง SHA-1 หารด้วย 20)
+    TotalSize: Int64;                     // ขนาดรวมของทุกไฟล์ในทอร์เรนต์ (Bytes)
+    IsPrivate: Boolean;                   // สถานะ Private Torrent (info.private = 1)
+    Trackers: array of string;            // รายชื่อ Announce URL ทั้งหมด
+    Files: array of TBencodeMetaFile;     // รายชื่อไฟล์ย่อยทั้งหมดในทอร์เรนต์
   end;
 
+{ อ่านไฟล์ .torrent จากดิสก์และถอดรหัสข้อมูลเมตาลงในตัวแปร Meta }
 function ParseTorrentFileMeta(const FileName: string; out Meta: TTorrentMetaPreview): Boolean;
 
 implementation
 
 type
+  { ประเภทของโหนดในต้นไม้ Bencode AST }
   TBencodeKind = (bkInt, bkStr, bkList, bkDict);
 
+  { คลาสแทนโหนดข้อมูล 1 โหนดในโครงสร้าง Bencode }
   TBencodeNode = class
   public
     Kind: TBencodeKind;
     IntVal: Int64;
     StrVal: RawByteString;
-    ListItems: TFPList;
-    DictKeys: TStringList;
-    DictVals: TFPList;
+    ListItems: TFPList;     // เก็บรายการ TBencodeNode กรณีเป็น bkList
+    DictKeys: TStringList;  // เก็บชื่อคีย์กรณีเป็น bkDict
+    DictVals: TFPList;      // เก็บโหนดค่าที่คู่กับ DictKeys กรณีเป็น bkDict
     constructor Create(AKind: TBencodeKind);
     destructor Destroy; override;
     function FindKey(const Key: string): TBencodeNode;
@@ -80,6 +98,7 @@ begin
   inherited Destroy;
 end;
 
+{ ค้นหาโหนดลูกภายใน Dictionary จากชื่อคีย์ }
 function TBencodeNode.FindKey(const Key: string): TBencodeNode;
 var
   I: Integer;
@@ -91,6 +110,7 @@ begin
       Exit(TBencodeNode(DictVals[I]));
 end;
 
+{ ฟังก์ชัน Recursive Descent Parser สำหรับแปลงกระแสไบต์ Bencode เป็นต้นไม้ TBencodeNode }
 function ParseBencodeValue(const Buf: RawByteString; var PosIdx: Integer; Len: Integer): TBencodeNode;
 var
   C: Char;
@@ -104,6 +124,7 @@ begin
 
   if C = 'i' then
   begin
+    // รูปแบบจำนวนเต็ม: i<ตัวเลข>e
     Inc(PosIdx);
     StartIdx := PosIdx;
     while (PosIdx <= Len) and (Buf[PosIdx] <> 'e') do
@@ -111,10 +132,11 @@ begin
     if PosIdx > Len then Exit;
     Result := TBencodeNode.Create(bkInt);
     Result.IntVal := StrToInt64Def(Copy(Buf, StartIdx, PosIdx - StartIdx), 0);
-    Inc(PosIdx); // skip 'e'
+    Inc(PosIdx); // ข้ามตัวอักษร 'e' ปิดท้าย
   end
   else if C = 'l' then
   begin
+    // รูปแบบลิสต์: l<สมาชิก...>e
     Inc(PosIdx);
     Result := TBencodeNode.Create(bkList);
     while (PosIdx <= Len) and (Buf[PosIdx] <> 'e') do
@@ -128,10 +150,11 @@ begin
       Result.ListItems.Add(ValNode);
     end;
     if PosIdx <= Len then
-      Inc(PosIdx); // skip 'e'
+      Inc(PosIdx); // ข้ามตัวอักษร 'e' ปิดท้าย
   end
   else if C = 'd' then
   begin
+    // รูปแบบพจนานุกรม (Dictionary): d<คีย์สตริง><ค่า>...e
     Inc(PosIdx);
     Result := TBencodeNode.Create(bkDict);
     while (PosIdx <= Len) and (Buf[PosIdx] <> 'e') do
@@ -155,16 +178,17 @@ begin
       KeyNode.Free;
     end;
     if PosIdx <= Len then
-      Inc(PosIdx); // skip 'e'
+      Inc(PosIdx); // ข้ามตัวอักษร 'e' ปิดท้าย
   end
   else if C in ['0'..'9'] then
   begin
+    // รูปแบบสตริงไบต์: <ความยาว>:<ข้อมูลไบต์>
     StartIdx := PosIdx;
     while (PosIdx <= Len) and (Buf[PosIdx] in ['0'..'9']) do
       Inc(PosIdx);
     if (PosIdx > Len) or (Buf[PosIdx] <> ':') then Exit;
     StrLen := StrToInt64Def(Copy(Buf, StartIdx, PosIdx - StartIdx), -1);
-    Inc(PosIdx); // skip ':'
+    Inc(PosIdx); // ข้ามเครื่องหมาย ':'
     if (StrLen < 0) or (PosIdx + StrLen - 1 > Len) then Exit;
     Result := TBencodeNode.Create(bkStr);
     Result.StrVal := Copy(Buf, PosIdx, StrLen);
@@ -172,6 +196,7 @@ begin
   end;
 end;
 
+{ ดึงค่าสตริงจาก Dictionary โดยให้ความสำคัญกับคีย์ .utf-8 ก่อนถ้ามี }
 function GetNodeStr(Dict: TBencodeNode; const KeyUtf8, KeyFallback: string): string;
 var
   N: TBencodeNode;
@@ -189,6 +214,7 @@ begin
     Result := N.StrVal;
 end;
 
+{ ดึงค่าตัวเลขจำนวนเต็ม 64 บิตจาก Dictionary }
 function GetNodeInt(Dict: TBencodeNode; const Key: string; Def: Int64 = 0): Int64;
 var
   N: TBencodeNode;
@@ -200,6 +226,7 @@ begin
     Result := N.IntVal;
 end;
 
+{ อ่านและแปลความหมายโครงสร้างไฟล์ .torrent ทั้งแบบไฟล์เดียว (Single-file) และหลายไฟล์ (Multi-file) }
 function ParseTorrentFileMeta(const FileName: string; out Meta: TTorrentMetaPreview): Boolean;
 var
   FS: TFileStream;
@@ -209,6 +236,7 @@ var
   PathStr: string;
 begin
   Result := False;
+  Raw := '';
   FillChar(Meta, SizeOf(Meta), 0);
   if not FileExists(FileName) then Exit;
 
@@ -235,7 +263,7 @@ begin
     Meta.CreatedBy := GetNodeStr(Root, 'created by.utf-8', 'created by');
     Meta.CreationDate := GetNodeInt(Root, 'creation date', 0);
 
-    // Trackers
+    // ดึงรายชื่อ Trackers จาก announce-list (BEP 12) หรือ announce เดี่ยว
     TrkCount := 0;
     N := Root.FindKey('announce-list');
     if (N <> nil) and (N.Kind = bkList) then
@@ -267,6 +295,7 @@ begin
       end;
     end;
 
+    // ดึงพจนานุกรม 'info' ซึ่งเก็บข้อมูลหลักของทอร์เรนต์
     Info := Root.FindKey('info');
     if (Info = nil) or (Info.Kind <> bkDict) then Exit;
 
@@ -277,11 +306,12 @@ begin
     Meta.PieceLength := GetNodeInt(Info, 'piece length', 0);
     Meta.IsPrivate := GetNodeInt(Info, 'private', 0) <> 0;
 
+    // คำนวณจำนวน Pieces จากความยาวไบต์ของฟิลด์ 'pieces' (SHA-1 ละ 20 ไบต์)
     N := Info.FindKey('pieces');
     if (N <> nil) and (N.Kind = bkStr) then
       Meta.PieceCount := Length(N.StrVal) div 20;
 
-    // Files (multi-file or single-file)
+    // ตรวจสอบว่าเป็นทอร์เรนต์แบบหลายไฟล์ (มีคีย์ 'files') หรือไฟล์เดียว (มีคีย์ 'length')
     N := Info.FindKey('files');
     if (N <> nil) and (N.Kind = bkList) then
     begin

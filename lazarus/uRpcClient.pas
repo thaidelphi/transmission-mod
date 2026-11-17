@@ -1,3 +1,17 @@
+{******************************************************************************
+ * ยูนิต: uRpcClient.pas
+ * คำอธิบาย:
+ *   คลาสจัดการการสื่อสารกับแกนหลักของ Transmission ผ่านโปรโตคอล JSON-RPC (HTTP POST)
+ *   และการจัดการโปรเซส `transmission-daemon.exe` อัตโนมัติในโหมด Local Session
+ *
+ * กลไกสำคัญของ Transmission JSON-RPC (ตามเอกสาร docs/rpc-spec.md):
+ *   1. ทุกคำสั่งส่งเป็น HTTP POST ไปที่ `/transmission/rpc` ในรูปแบบ JSON:
+ *      `{"method": "<ชื่อคำสั่ง>", "arguments": { ... }}`
+ *   2. ระบบป้องกัน CSRF ด้วยโทเค็น `X-Transmission-Session-Id`:
+ *      เมื่อส่งคำขอครั้งแรกโดยไม่มีโทเค็น หรือโทเค็นหมดอายุ เซิร์ฟเวอร์จะตอบกลับด้วยรหัส
+ *      `HTTP 409 Conflict` พร้อมแนบ Header `X-Transmission-Session-Id: <รหัสใหม่>`
+ *      เมธอด `SendRpcRequest` จะอ่านค่า Header นี้แล้วส่งคำขอซ้ำให้อัตโนมัติทันที
+ ******************************************************************************}
 unit uRpcClient;
 
 {$mode objfpc}{$H+}
@@ -9,19 +23,19 @@ uses
   Classes, SysUtils, fpjson, jsonparser, fphttpclient, base64, process, uTypes;
 
 type
-  { TTransmissionRpcClient }
+  { TTransmissionRpcClient: ตัวแทนเชื่อมต่อและสั่งงาน Transmission Engine }
   TTransmissionRpcClient = class
   private
-    FHost: string;
-    FPort: Integer;
-    FUrlPath: string;
-    FUsername: string;
-    FPassword: string;
-    FSessionId: string;
-    FIsLocalSession: Boolean;
-    FDaemonProcess: TProcess;
-    FLastError: string;
-    FConnected: Boolean;
+    FHost: string;               // ชื่อโฮสต์หรือ IP ของ RPC Server (ค่าเริ่มต้น '127.0.0.1')
+    FPort: Integer;              // พอร์ตของ RPC Server (ค่าเริ่มต้น 9091)
+    FUrlPath: string;            // พาธของ RPC Endpoint (ค่าเริ่มต้น '/transmission/rpc')
+    FUsername: string;           // ชื่อผู้ใช้กรณีเปิด HTTP Basic Authentication
+    FPassword: string;           // รหัสผ่านกรณีเปิด HTTP Basic Authentication
+    FSessionId: string;          // โทเค็น X-Transmission-Session-Id ปัจจุบัน
+    FIsLocalSession: Boolean;    // True = รันและจัดการ transmission-daemon.exe ในเครื่องอัตโนมัติ
+    FDaemonProcess: TProcess;    // ออบเจกต์โปรเซสของ transmission-daemon.exe ที่เราเปิดขึ้นเอง
+    FLastError: string;          // ข้อความข้อผิดพลาดล่าสุด
+    FConnected: Boolean;         // สถานะว่าเชื่อมต่อกับ RPC Server สำเร็จหรือไม่
 
     function GetRpcUrl: string;
     function FindDaemonExecutable: string;
@@ -31,22 +45,32 @@ type
     constructor Create;
     destructor Destroy; override;
 
+    { ตั้งค่าพารามิเตอร์การเชื่อมต่อ Local หรือ Remote Session }
     procedure Configure(const AHost: string; APort: Integer; const AUser, APass: string;
       ALocalSession: Boolean; const AUrlPath: string = '/transmission/rpc');
+
+    { ตรวจสอบว่า Local Daemon รันอยู่หรือไม่ หากยังไม่ได้รันจะสั่งเปิดให้อัตโนมัติ }
     function EnsureLocalDaemonRunning: Boolean;
+
+    { ปิดโปรเซส Local Daemon ที่โปรแกรมนี้เป็นคนเปิดขึ้นเมื่อปิดโปรแกรม }
     procedure StopLocalDaemonIfOwned;
 
+    { คำสั่งระดับเซสชัน (session-get, session-set, session-stats) }
     function FetchSession(out Config: TSessionConfig): Boolean;
     function UpdateSession(Args: TJSONObject): Boolean;
     function FetchSessionStats(out Stats: TSessionStatsData): Boolean;
+
+    { คำสั่งดึงรายการและรายละเอียดของทอร์เรนต์ (torrent-get) }
     function FetchTorrents(List: TList): Boolean;
     function FetchTorrentDetails(Torrent: TTorrentItem): Boolean;
 
+    { คำสั่งเพิ่มทอร์เรนต์ใหม่จากไฟล์ .torrent (Base64 metainfo) หรือ Magnet/URL (torrent-add) }
     function AddTorrentFile(const FileName, DownloadDir: string; StartImmediately: Boolean;
       Priority: Integer; const UnwantedFiles: array of Integer; out AddedName: string): Boolean;
     function AddTorrentUrl(const MagnetOrUrl, DownloadDir: string; StartImmediately: Boolean;
       Priority: Integer; out AddedName: string): Boolean;
 
+    { คำสั่งควบคุมการทำงานของทอร์เรนต์ (Start, Stop, Verify, Reannounce, Remove, Relocate, Rename, Queue) }
     function StartTorrents(const Ids: array of Integer; Immediate: Boolean = False): Boolean;
     function StopTorrents(const Ids: array of Integer): Boolean;
     function VerifyTorrents(const Ids: array of Integer): Boolean;
@@ -56,6 +80,8 @@ type
     function RenameTorrentPath(TorrentId: Integer; const OldPath, NewName: string): Boolean;
     function QueueMove(const Ids: array of Integer; const DirectionMethod: string): Boolean;
     function SetTorrentOptions(TorrentId: Integer; Args: TJSONObject): Boolean;
+
+    { คำสั่งเครือข่าย พื้นที่ว่าง และการสร้างไฟล์ .torrent }
     function TestPeerPort(out IsOpen: Boolean): Boolean;
     function UpdateBlocklist(out RulesCount: Integer): Boolean;
     function QueryFreeSpace(const DirPath: string; out FreeBytes: Int64): Boolean;
@@ -75,6 +101,7 @@ type
 
 implementation
 
+{ ฟังก์ชันช่วยอ่านค่า String จาก TJSONObject อย่างปลอดภัย }
 function JsonGetStr(Obj: TJSONObject; const Key: string; const Def: string = ''): string;
 var
   D: TJSONData;
@@ -86,6 +113,7 @@ begin
     Result := D.AsString;
 end;
 
+{ ฟังก์ชันช่วยอ่านค่า Int64 จาก TJSONObject อย่างปลอดภัย }
 function JsonGetInt64(Obj: TJSONObject; const Key: string; const Def: Int64 = 0): Int64;
 var
   D: TJSONData;
@@ -107,6 +135,7 @@ begin
   Result := Integer(JsonGetInt64(Obj, Key, Def));
 end;
 
+{ ฟังก์ชันช่วยอ่านค่าทศนิยม Double จาก TJSONObject อย่างปลอดภัย }
 function JsonGetFloat(Obj: TJSONObject; const Key: string; const Def: Double = 0.0): Double;
 var
   D: TJSONData;
@@ -118,6 +147,7 @@ begin
     Result := D.AsFloat;
 end;
 
+{ ฟังก์ชันช่วยอ่านค่าตรรกะ Boolean จาก TJSONObject อย่างปลอดภัย }
 function JsonGetBool(Obj: TJSONObject; const Key: string; const Def: Boolean = False): Boolean;
 var
   D: TJSONData;
@@ -179,6 +209,7 @@ begin
   Result := Format('http://%s:%d%s', [FHost, FPort, FUrlPath]);
 end;
 
+{ ค้นหาตำแหน่งไฟล์ transmission-daemon.exe จากโฟลเดอร์ปัจจุบันหรือโฟลเดอร์ build/daemon/ }
 function TTransmissionRpcClient.FindDaemonExecutable: string;
 var
   AppDir, Candidate: string;
@@ -197,6 +228,7 @@ begin
   Result := '';
 end;
 
+{ ตรวจสอบและสั่งรัน transmission-daemon.exe ในโหมดเบื้องหลัง (poNoConsole) หากรันในโหมด Local Session }
 function TTransmissionRpcClient.EnsureLocalDaemonRunning: Boolean;
 var
   DaemonExe: string;
@@ -206,6 +238,7 @@ begin
   if not FIsLocalSession then
     Exit(True);
 
+  // หากมี Daemon ตอบกลับที่พอร์ตนี้อยู่แล้ว ไม่ต้องสั่งเปิดซ้ำ
   if FetchSession(Cfg) then
     Exit(True);
 
@@ -223,7 +256,7 @@ begin
   FDaemonProcess := TProcess.Create(nil);
   FDaemonProcess.Executable := DaemonExe;
   FDaemonProcess.CurrentDirectory := ExtractFilePath(DaemonExe);
-  FDaemonProcess.Parameters.Add('-f');
+  FDaemonProcess.Parameters.Add('-f'); // รันในโหมด Foreground ของโปรเซสย่อยแต่ซ่อนหน้าต่างด้วย poNoConsole
   FDaemonProcess.Parameters.Add('-p');
   FDaemonProcess.Parameters.Add(IntToStr(FPort));
   FDaemonProcess.Parameters.Add('-a');
@@ -240,6 +273,7 @@ begin
     end;
   end;
 
+  // รอสูงสุด 2.5 วินาทีเพื่อให้ HTTP RPC Server ของ Daemon เริ่มต้นเสร็จ
   for Retries := 1 to 10 do
   begin
     Sleep(250);
@@ -263,6 +297,7 @@ begin
   end;
 end;
 
+{ ดึงค่าจาก HTTP Response Header ตามชื่อคีย์ (ไม่สนใจตัวพิมพ์เล็ก/ใหญ่) }
 function TTransmissionRpcClient.ExtractHeaderValue(Headers: TStrings;
   const HeaderName: string): string;
 var
@@ -286,6 +321,7 @@ begin
   end;
 end;
 
+{ ส่งคำสั่ง JSON-RPC ไปยังเซิร์ฟเวอร์ พร้อมรองรับการขอโทเค็น X-Transmission-Session-Id อัตโนมัติเมื่อได้รหัส 409 }
 function TTransmissionRpcClient.SendRpcRequest(const Method: string;
   Args: TJSONObject; out ResponseRoot: TJSONObject): Boolean;
 var
@@ -348,6 +384,7 @@ begin
           end;
         end;
 
+        // กรณีได้รับ HTTP 409: อ่านค่า X-Transmission-Session-Id ใหม่แล้ววนลูปรอบที่ 2 ทันที
         if Http.ResponseStatusCode = 409 then
         begin
           NewSid := ExtractHeaderValue(Http.ResponseHeaders, 'X-Transmission-Session-Id');
@@ -398,6 +435,7 @@ begin
   end;
 end;
 
+{ ดึงค่าการตั้งค่าทั้งหมดของเซสชันด้วยคำสั่ง `session-get` }
 function TTransmissionRpcClient.FetchSession(out Config: TSessionConfig): Boolean;
 var
   Resp, Args: TJSONObject;
@@ -453,6 +491,7 @@ begin
   end;
 end;
 
+{ บันทึกการตั้งค่าระดับเซสชันด้วยคำสั่ง `session-set` }
 function TTransmissionRpcClient.UpdateSession(Args: TJSONObject): Boolean;
 var
   Resp: TJSONObject;
@@ -461,6 +500,7 @@ begin
   Resp.Free;
 end;
 
+{ ดึงข้อมูลสถิติการรับ-ส่งข้อมูลของเซสชันและยอดสะสมด้วยคำสั่ง `session-stats` }
 function TTransmissionRpcClient.FetchSessionStats(out Stats: TSessionStatsData): Boolean;
 var
   Resp, Args, Sub: TJSONObject;
@@ -502,6 +542,7 @@ begin
   end;
 end;
 
+{ ดึงรายการทอร์เรนต์ทั้งหมดสำหรับแสดงผลในหน้าต่างหลักด้วยคำสั่ง `torrent-get` }
 function TTransmissionRpcClient.FetchTorrents(List: TList): Boolean;
 const
   FieldNames: array[0..33] of string = (
@@ -606,6 +647,7 @@ begin
   end;
 end;
 
+{ ดึงข้อมูลเชิงลึกของทอร์เรนต์เฉพาะตัว (Files, Peers, Trackers, Options) สำหรับหน้าต่าง Properties }
 function TTransmissionRpcClient.FetchTorrentDetails(Torrent: TTorrentItem): Boolean;
 const
   DetailFields: array[0..30] of string = (
@@ -747,6 +789,7 @@ begin
   end;
 end;
 
+{ อ่านไฟล์ .torrent แปลงเป็น Base64 แล้วส่งคำสั่ง `torrent-add` พร้อมระบุไฟล์ที่ไม่ต้องการดาวน์โหลด (files-unwanted) }
 function TTransmissionRpcClient.AddTorrentFile(const FileName, DownloadDir: string;
   StartImmediately: Boolean; Priority: Integer; const UnwantedFiles: array of Integer;
   out AddedName: string): Boolean;
@@ -808,6 +851,7 @@ begin
   end;
 end;
 
+{ เพิ่มทอร์เรนต์ผ่านลิงก์ Magnet หรือ HTTP URL ด้วยคำสั่ง `torrent-add` }
 function TTransmissionRpcClient.AddTorrentUrl(const MagnetOrUrl, DownloadDir: string;
   StartImmediately: Boolean; Priority: Integer; out AddedName: string): Boolean;
 var
@@ -838,6 +882,7 @@ begin
   end;
 end;
 
+{ สร้าง JSON Object ที่มีอาร์เรย์ `"ids": [...]` (หากอาร์เรย์ว่างหมายถึงทุกทอร์เรนต์) }
 function BuildIdsArg(const Ids: array of Integer): TJSONObject;
 var
   Arr: TJSONArray;
@@ -1004,6 +1049,7 @@ begin
   end;
 end;
 
+{ ส่งต่อคำขอ JSON-RPC ดิบจากหน้าเว็บ (Web UI) ไปยัง RPC Server เบื้องหลังพร้อมจัดการ Session Token }
 function TTransmissionRpcClient.ForwardRawRpc(const RequestJson: string;
   out ResponseJson: string): Boolean;
 var
@@ -1074,6 +1120,7 @@ begin
   end;
 end;
 
+{ เรียกใช้งาน `transmission-create.exe` เพื่อสร้างไฟล์ .torrent จากไฟล์หรือโฟลเดอร์ }
 function TTransmissionRpcClient.CreateTorrentFile(const SourcePath,
   OutputTorrentFile: string; Trackers: TStrings; const Comment: string;
   IsPrivate: Boolean; out LogOutput: string): Boolean;

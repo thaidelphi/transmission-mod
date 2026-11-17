@@ -1,3 +1,16 @@
+{******************************************************************************
+ * ยูนิต: uWebServer.pas
+ * คำอธิบาย:
+ *   เซิร์ฟเวอร์ HTTP ในตัวแบบ Multi-threaded (`TFPHTTPServer` รันบน `TThread` แยก)
+ *   สำหรับให้บริการหน้าเว็บควบคุมบิตทอร์เรนต์ (`web_ui/index.html`) และทำหน้าที่เป็น
+ *   JSON-RPC Proxy Gateway ที่พาธ `/transmission/rpc`
+ *
+ * คุณสมบัติหลัก:
+ *   1. รันบนพอร์ตเริ่มต้น `9092` (เปลี่ยนพอร์ตได้ในหน้าต่าง Preferences -> Remote / Web)
+ *   2. รองรับการตรวจสอบสิทธิ์แบบ HTTP Basic Authentication (`WWW-Authenticate`)
+ *   3. ส่งต่อคำขอ `/transmission/rpc` ไปยัง `TTransmissionRpcClient.ForwardRawRpc`
+ *      ทำให้หน้าเว็บสามารถควบคุมทั้ง Local Session และ Remote Session ได้โดยไม่ติด CORS
+ ******************************************************************************}
 unit uWebServer;
 
 {$mode objfpc}{$H+}
@@ -11,16 +24,16 @@ uses
 type
   TWebServerThread = class;
 
-  { TTransmissionWebServer }
+  { TTransmissionWebServer: คลาสควบคุมการเปิด/ปิดและจัดการคำขอของ Web UI Server }
   TTransmissionWebServer = class
   private
-    FRpc: TTransmissionRpcClient;
-    FPort: Word;
-    FEnabled: Boolean;
-    FAuthEnabled: Boolean;
-    FUsername: string;
-    FPassword: string;
-    FThread: TWebServerThread;
+    FRpc: TTransmissionRpcClient; // อ้างอิงไปยัง RPC Client หลักของโปรแกรม
+    FPort: Word;                  // พอร์ต HTTP ที่เปิดรับการเชื่อมต่อ (ค่าเริ่มต้น 9092)
+    FEnabled: Boolean;            // สถานะการเปิดใช้งาน Web Server
+    FAuthEnabled: Boolean;        // เปิดการถามรหัสผ่าน HTTP Basic Auth หรือไม่
+    FUsername: string;            // ชื่อผู้ใช้สำหรับเข้าหน้าเว็บ
+    FPassword: string;            // รหัสผ่านสำหรับเข้าหน้าเว็บ
+    FThread: TWebServerThread;    // เธรดเบื้องหลังที่รัน TFPHTTPServer
     function FindWebUiHtmlPath: string;
     function CheckBasicAuth(ARequest: TFPHTTPConnectionRequest): Boolean;
     procedure HandleRequest(Sender: TObject; var ARequest: TFPHTTPConnectionRequest;
@@ -29,9 +42,12 @@ type
     constructor Create(ARpc: TTransmissionRpcClient);
     destructor Destroy; override;
 
+    { เริ่มต้น / หยุด / รีสตาร์ท HTTP Server }
     procedure StartServer;
     procedure StopServer;
     procedure RestartServer;
+
+    { คืนค่า URL สำหรับเปิดหน้าเว็บในเบราว์เซอร์ เช่น "http://127.0.0.1:9092/" }
     function GetWebUrl: string;
 
     property Port: Word read FPort write FPort;
@@ -41,7 +57,7 @@ type
     property Password: string read FPassword write FPassword;
   end;
 
-  { TWebServerThread }
+  { TWebServerThread: เธรดแยกสำหรับรัน Blocking Accept Loop ของ TFPHTTPServer }
   TWebServerThread = class(TThread)
   private
     FServer: TFPHTTPServer;
@@ -150,6 +166,7 @@ begin
     Result := Format('http://%s:%d/', [FRpc.Host, FRpc.Port]);
 end;
 
+{ ค้นหาไฟล์ HTML ของหน้าเว็บ Web UI จากโฟลเดอร์ `web_ui/index.html` }
 function TTransmissionWebServer.FindWebUiHtmlPath: string;
 var
   AppDir, Candidate: string;
@@ -168,6 +185,7 @@ begin
   Result := '';
 end;
 
+{ ตรวจสอบ Header `Authorization: Basic <base64>` กรณีผู้ใช้เปิดใช้งานรหัสผ่านหน้าเว็บ }
 function TTransmissionWebServer.CheckBasicAuth(ARequest: TFPHTTPConnectionRequest): Boolean;
 var
   AuthHeader, Expected: string;
@@ -180,6 +198,7 @@ begin
   Result := SameText(AuthHeader, Expected);
 end;
 
+{ เมธอดหลักในการตอบกลับคำขอ HTTP ทั้งหน้าเว็บ HTML และคำสั่ง `/transmission/rpc` }
 procedure TTransmissionWebServer.HandleRequest(Sender: TObject;
   var ARequest: TFPHTTPConnectionRequest;
   var AResponse: TFPHTTPConnectionResponse);
@@ -187,6 +206,7 @@ var
   UriPath, HtmlPath, RespJson: string;
   SL: TStringList;
 begin
+  // 1. ตรวจสอบสิทธิ์ HTTP Basic Auth หากเปิดใช้งานไว้
   if not CheckBasicAuth(ARequest) then
   begin
     AResponse.Code := 401;
@@ -200,6 +220,7 @@ begin
   if Pos('?', UriPath) > 0 then
     UriPath := Copy(UriPath, 1, Pos('?', UriPath) - 1);
 
+  // 2. หากเป็นคำขอ JSON-RPC ที่ `/transmission/rpc` ให้ส่งต่อไปยัง FRpc.ForwardRawRpc
   if SameText(UriPath, '/transmission/rpc') or SameText(UriPath, '/rpc') then
   begin
     AResponse.ContentType := 'application/json; charset=utf-8';
@@ -216,6 +237,7 @@ begin
     Exit;
   end;
 
+  // 3. เสิร์ฟหน้าเว็บแอปพลิเคชัน `web_ui/index.html`
   HtmlPath := FindWebUiHtmlPath;
   if (HtmlPath <> '') and FileExists(HtmlPath) then
   begin

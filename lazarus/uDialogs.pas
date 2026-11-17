@@ -1,3 +1,31 @@
+{******************************************************************************
+ * ยูนิต: uDialogs.pas
+ * คำอธิบาย:
+ *   รวบรวมหน้าต่างโต้ตอบ (Dialogs) ทั้งหมดของโปรแกรม โดยถอดแบบโครงสร้างและหน้าที่
+ *   มาจากชุดไฟล์ .ui ของ `transmission-qt` ได้แก่:
+ *
+ *   1. ShowOpenTorrentDialog (เหมือน OptionsDialog.ui):
+ *      - อ่านโครงสร้างไฟล์ .torrent ด้วย uBencode ทันทีที่เลือกไฟล์
+ *      - แสดงตารางรายชื่อไฟล์ย่อยข้างในพร้อม Checkbox ให้เลือก/ข้ามไฟล์ก่อนกดเริ่มโหลด
+ *      - แสดงพื้นที่ว่างในโฟลเดอร์ปลายทางสด ๆ ผ่านคำสั่ง RPC `free-space`
+ *   2. ShowAddUrlDialog:
+ *      - รับลิงก์ `magnet:?` หรือ URL ของไฟล์ `.torrent` (ดึงจาก Clipboard อัตโนมัติ)
+ *   3. ShowMakeTorrentDialog (เหมือน MakeDialog.ui):
+ *      - สร้างไฟล์ `.torrent` ใหม่จากไฟล์หรือโฟลเดอร์ผ่าน `transmission-create.exe`
+ *   4. ShowEditTrackersDialog (เหมือน TrackersDialog.ui):
+ *      - แก้ไขรายการ Tracker Announce URLs แบบแบ่งบรรทัดและแบ่ง Tier ด้วยบรรทัดว่าง
+ *   5. ShowDetailsDialog (เหมือน DetailsDialog.ui):
+ *      - หน้าต่าง Properties 6 แท็บ (Activity, Information, Peers, Trackers, Files, Options)
+ *      - มี TTimer อัปเดตข้อมูลความเร็ว เปอร์เซ็นต์ และรายชื่อ Peers แบบ Real-time ทุก 2 วินาที
+ *   6. ShowSessionDialog (เหมือน SessionDialog.ui):
+ *      - สลับการเชื่อมต่อระหว่าง Local Session และ Remote Session (RPC)
+ *   7. ShowPrefsDialog (เหมือน PrefsDialog.ui):
+ *      - หน้าต่างตั้งค่าโปรแกรม 6 แท็บ (Speed, Downloading, Seeding, Privacy, Network, Remote/Web)
+ *   8. ShowRelocateDialog (เหมือน RelocateDialog.ui):
+ *      - ย้ายโฟลเดอร์เก็บข้อมูลของทอร์เรนต์ (`torrent-set-location`)
+ *   9. ShowStatsDialog (เหมือน StatsDialog.ui):
+ *      - แสดงสถิติการใช้งานเซสชันปัจจุบันและยอดสะสมทั้งหมด พร้อมอัปเดตสดทุก 2 วินาที
+ ******************************************************************************}
 unit uDialogs;
 
 {$mode objfpc}{$H+}
