@@ -1,0 +1,12 @@
+object MainForm: TMainForm
+  Left = 240
+  Height = 640
+  Top = 140
+  Width = 1020
+  Caption = 'Transmission'
+  Font.Name = 'Segoe UI'
+  Font.Size = 9
+  OnCreate = FormCreate
+  OnDestroy = FormDestroy
+  LCLVersion = '4.6.0.0'
+end

@@ -35,3 +35,9 @@ compile_commands.json
 
 # CMake user presets
 CMakeUserPresets.json
+
+# Lazarus build outputs
+/lazarus/lib/
+/lazarus/backup/
+/lazarus/*.exe
+/lazarus/*.res
