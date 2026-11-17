@@ -21,6 +21,9 @@ type
 
   { TMainForm }
   TMainForm = class(TForm)
+  published
+    procedure FormCreate(Sender: TObject);
+    procedure FormDestroy(Sender: TObject);
   private
     FRpc: TTransmissionRpcClient;
     FWebServer: TTransmissionWebServer;
@@ -112,8 +115,6 @@ type
     procedure RefreshFromRpc;
 
     // Event Handlers
-    procedure FormCreate(Sender: TObject);
-    procedure FormDestroy(Sender: TObject);
     procedure FormDropFiles(Sender: TObject; const FileNames: array of string);
     procedure TimerRefreshTimer(Sender: TObject);
 
