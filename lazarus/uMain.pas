@@ -109,6 +109,7 @@ type
     FPnlStatusBar: TPanel;
     FBtnOptionsMenu: TSpeedButton;
     FBtnAltSpeed: TSpeedButton;
+    FBtnGlobalTrackerPause: TSpeedButton;
     FLblStatusInfo: TLabel;
     FLblDownSpeed: TLabel;
     FLblUpSpeed: TLabel;
@@ -206,6 +207,8 @@ type
     procedure ActSortModeClick(Sender: TObject);
     procedure ActToggleReverseSort(Sender: TObject);
     procedure ActToggleAltSpeed(Sender: TObject);
+    procedure ActToggleGlobalTrackerPause(Sender: TObject);
+    procedure ActToggleSelectedTrackerPackets(Sender: TObject);
     procedure ActOpenWebUi(Sender: TObject);
     procedure ActShowStatistics(Sender: TObject);
     procedure ActShowAbout(Sender: TObject);
@@ -548,6 +551,7 @@ begin
   AddItem(MnuQueue, 'Move to &Bottom', 0, @ActQueueMove, 4);
 
   AddItem(MnuTorrent, 'Ask Tracker for &More Peers', 0, @ActAnnounceSelected);
+  AddItem(MnuTorrent, 'Pause &Tracker Packets', 0, @ActToggleSelectedTrackerPackets);
   AddItem(MnuTorrent, '&Pause', ShortCut(Ord('P'), [ssCtrl]), @ActPauseSelected);
   AddSep(MnuTorrent);
   AddItem(MnuTorrent, 'Set &Location...', 0, @ActSetLocation);
@@ -603,6 +607,7 @@ begin
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Set Location...'; PItem.OnClick := @ActSetLocation; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Verify Local Data'; PItem.OnClick := @ActVerifySelected; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Ask Tracker for More Peers'; PItem.OnClick := @ActAnnounceSelected; FTorrentPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Pause Tracker Packets'; PItem.OnClick := @ActToggleSelectedTrackerPackets; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Copy Magnet Link to Clipboard'; PItem.OnClick := @ActCopyMagnet; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Remove'; PItem.OnClick := @ActRemoveSelected; FTorrentPopup.Items.Add(PItem);
@@ -622,6 +627,7 @@ begin
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Preferences...'; PItem.OnClick := @ActPreferences; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Statistics...'; PItem.OnClick := @ActShowStatistics; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FOptionsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Block All Tracker Packets'; PItem.OnClick := @ActToggleGlobalTrackerPause; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Compact View'; PItem.OnClick := @ActToggleCompactView; FOptionsPopup.Items.Add(PItem);
 end;
 
@@ -640,6 +646,7 @@ begin
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Start All'; PItem.OnClick := @ActStartAll; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Pause All'; PItem.OnClick := @ActPauseAll; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Alternative Speed Limits'; PItem.OnClick := @ActToggleAltSpeed; FTrayPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Block All Tracker Packets'; PItem.OnClick := @ActToggleGlobalTrackerPause; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Quit'; PItem.OnClick := @ActQuit; FTrayPopup.Items.Add(PItem);
 
@@ -863,6 +870,42 @@ begin
   finally
     Bmp.Free;
   end;
+
+  // 4. Global Tracker Packet ON/OFF button icon & caption
+  if FBtnGlobalTrackerPause <> nil then
+  begin
+    Bmp := TBitmap.Create;
+    try
+      Bmp.SetSize(16, 16);
+      Bmp.Transparent := True;
+      Bmp.TransparentColor := clFuchsia;
+      C := Bmp.Canvas;
+      C.Brush.Color := clFuchsia;
+      C.FillRect(0, 0, 16, 16);
+      if FSessionConfig.TrackerPaused then
+      begin
+        C.Pen.Color := RGBToColor(205, 45, 45);
+        C.Pen.Width := 2;
+        C.Ellipse(2, 2, 14, 14);
+        C.MoveTo(4, 12); C.LineTo(12, 4);
+        FBtnGlobalTrackerPause.Caption := 'Tracker: OFF';
+        FBtnGlobalTrackerPause.Font.Color := RGBToColor(190, 35, 35);
+      end
+      else
+      begin
+        C.Pen.Color := RGBToColor(30, 135, 65);
+        C.Pen.Width := 2;
+        C.MoveTo(8, 13); C.LineTo(8, 5);
+        C.MoveTo(4, 9); C.LineTo(8, 5); C.LineTo(12, 9);
+        FBtnGlobalTrackerPause.Caption := 'Tracker: ON';
+        FBtnGlobalTrackerPause.Font.Color := RGBToColor(25, 110, 50);
+      end;
+      FBtnGlobalTrackerPause.Down := FSessionConfig.TrackerPaused;
+      FBtnGlobalTrackerPause.Glyph.Assign(Bmp);
+    finally
+      Bmp.Free;
+    end;
+  end;
 end;
 
 procedure TMainForm.BuildFilterBar;
@@ -977,9 +1020,25 @@ begin
   FBtnAltSpeed.ShowHint := True;
   FBtnAltSpeed.OnClick := @ActToggleAltSpeed;
 
+  FBtnGlobalTrackerPause := TSpeedButton.Create(FPnlStatusBar);
+  FBtnGlobalTrackerPause.Parent := FPnlStatusBar;
+  FBtnGlobalTrackerPause.Left := 62;
+  FBtnGlobalTrackerPause.Top := 3;
+  FBtnGlobalTrackerPause.Width := 118;
+  FBtnGlobalTrackerPause.Height := 22;
+  FBtnGlobalTrackerPause.Flat := True;
+  FBtnGlobalTrackerPause.GroupIndex := 3;
+  FBtnGlobalTrackerPause.AllowAllUp := True;
+  FBtnGlobalTrackerPause.Margin := 3;
+  FBtnGlobalTrackerPause.Spacing := 4;
+  FBtnGlobalTrackerPause.Hint := 'ปิด/เปิด การส่ง Packet ไปหา Tracker ทั้งโปรแกรม';
+  FBtnGlobalTrackerPause.ShowHint := True;
+  FBtnGlobalTrackerPause.Caption := 'Tracker: ON';
+  FBtnGlobalTrackerPause.OnClick := @ActToggleGlobalTrackerPause;
+
   FLblStatusInfo := TLabel.Create(FPnlStatusBar);
   FLblStatusInfo.Parent := FPnlStatusBar;
-  FLblStatusInfo.Left := 66;
+  FLblStatusInfo.Left := 186;
   FLblStatusInfo.Top := 6;
   FLblStatusInfo.Caption := '';
 
@@ -1214,6 +1273,8 @@ begin
     );
 
     StatusStr := T.ShortStatusString;
+    if T.TrackerPaused or FSessionConfig.TrackerPaused then
+      StatusStr := StatusStr + ' [No Tracker]';
     C.Font.Size := 8;
     C.Font.Color := SubCol;
     StatusW := C.TextWidth(StatusStr);
@@ -1243,6 +1304,8 @@ begin
     C.TextOut(IconR.Right + 10, ARect.Top + 4, T.Name);
 
     Line2 := T.FullStatusString;
+    if T.TrackerPaused or FSessionConfig.TrackerPaused then
+      Line2 := Line2 + '  [Tracker Packets Paused]';
     C.Font.Size := 8;
     C.Font.Style := [];
     C.Font.Color := SubCol;
@@ -1512,8 +1575,12 @@ var
 begin
   if FTrayPopup = nil then Exit;
   for I := 0 to FTrayPopup.Items.Count - 1 do
+  begin
     if Pos('Alternative Speed', FTrayPopup.Items[I].Caption) > 0 then
-      FTrayPopup.Items[I].Checked := FSessionConfig.AltSpeedEnabled;
+      FTrayPopup.Items[I].Checked := FSessionConfig.AltSpeedEnabled
+    else if Pos('Block All Tracker', FTrayPopup.Items[I].Caption) > 0 then
+      FTrayPopup.Items[I].Checked := FSessionConfig.TrackerPaused;
+  end;
 end;
 
 procedure TMainForm.LstTorrentsKeyDown(Sender: TObject; var Key: Word;
@@ -1772,7 +1839,7 @@ procedure TMainForm.UpdateTorrentMenuStates;
     Result := (TMethod(A).Code = TMethod(B).Code) and (TMethod(A).Data = TMethod(B).Data);
   end;
 
-  procedure SyncMenuItems(ParentItem: TMenuItem; HasSel, CanStart, CanPause, HasMagnet: Boolean);
+  procedure SyncMenuItems(ParentItem: TMenuItem; HasSel, CanStart, CanPause, HasMagnet, TrkPaused: Boolean);
   var
     I: Integer;
     MI: TMenuItem;
@@ -1785,7 +1852,7 @@ procedure TMainForm.UpdateTorrentMenuStates;
       if MI.Count > 0 then
       begin
         MI.Enabled := HasSel;
-        SyncMenuItems(MI, HasSel, CanStart, CanPause, HasMagnet);
+        SyncMenuItems(MI, HasSel, CanStart, CanPause, HasMagnet, TrkPaused);
       end
       else if SameClick(MI.OnClick, @ActStartSelected) or SameClick(MI.OnClick, @ActStartNowSelected) then
         MI.Enabled := CanStart
@@ -1793,6 +1860,11 @@ procedure TMainForm.UpdateTorrentMenuStates;
         MI.Enabled := CanPause
       else if SameClick(MI.OnClick, @ActCopyMagnet) then
         MI.Enabled := HasMagnet
+      else if SameClick(MI.OnClick, @ActToggleSelectedTrackerPackets) then
+      begin
+        MI.Enabled := HasSel;
+        MI.Checked := HasSel and TrkPaused;
+      end
       else
         MI.Enabled := HasSel;
     end;
@@ -1800,19 +1872,22 @@ procedure TMainForm.UpdateTorrentMenuStates;
 var
   I: Integer;
   T: TTorrentItem;
-  HasSel, CanStart, CanPause, HasMagnet: Boolean;
+  HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused: Boolean;
 begin
   HasSel := False;
   CanStart := False;
   CanPause := False;
   HasMagnet := False;
+  FirstTrkPaused := False;
 
   for I := 0 to FLstTorrents.Items.Count - 1 do
   begin
     if FLstTorrents.Selected[I] and (I < FFilteredTorrents.Count) then
     begin
-      HasSel := True;
       T := TTorrentItem(FFilteredTorrents[I]);
+      if not HasSel then
+        FirstTrkPaused := T.TrackerPaused;
+      HasSel := True;
       if T.IsPaused or (T.Status = TR_STATUS_DOWNLOAD_WAIT) or (T.Status = TR_STATUS_SEED_WAIT) then
         CanStart := True;
       if not T.IsPaused then
@@ -1822,9 +1897,9 @@ begin
     end;
   end;
 
-  SyncMenuItems(MnuTorrent, HasSel, CanStart, CanPause, HasMagnet);
+  SyncMenuItems(MnuTorrent, HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused);
   if FTorrentPopup <> nil then
-    SyncMenuItems(FTorrentPopup.Items, HasSel, CanStart, CanPause, HasMagnet);
+    SyncMenuItems(FTorrentPopup.Items, HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused);
 end;
 
 procedure TMainForm.UpdateActionStates;
@@ -1956,7 +2031,7 @@ procedure TMainForm.RefreshFromRpc;
 var
   NewList: TList;
   I: Integer;
-  PrevAlt: Boolean;
+  PrevAlt, PrevTrkPaused: Boolean;
   FreshSession: TSessionConfig;
 begin
   if FModalDepth > 0 then Exit;
@@ -1974,10 +2049,11 @@ begin
       if (FSessionSyncCounter mod 4) = 0 then
       begin
         PrevAlt := FSessionConfig.AltSpeedEnabled;
+        PrevTrkPaused := FSessionConfig.TrackerPaused;
         if FRpc.FetchSession(FreshSession) then
         begin
           FSessionConfig := FreshSession;
-          if FSessionConfig.AltSpeedEnabled <> PrevAlt then
+          if (FSessionConfig.AltSpeedEnabled <> PrevAlt) or (FSessionConfig.TrackerPaused <> PrevTrkPaused) then
             RenderStatusBarIcons;
         end;
       end;
@@ -2431,6 +2507,32 @@ begin
   FRpc.UpdateSession(Args);
 end;
 
+procedure TMainForm.ActToggleGlobalTrackerPause(Sender: TObject);
+var
+  Args: TJSONObject;
+begin
+  FSessionConfig.TrackerPaused := not FSessionConfig.TrackerPaused;
+  RenderStatusBarIcons;
+  Args := TJSONObject.Create;
+  Args.Add('tracker_paused', FSessionConfig.TrackerPaused);
+  FRpc.UpdateSession(Args);
+  RefreshFromRpc;
+end;
+
+procedure TMainForm.ActToggleSelectedTrackerPackets(Sender: TObject);
+var
+  Ids: TIntegerDynArray;
+  T: TTorrentItem;
+  NextPaused: Boolean;
+begin
+  Ids := GetSelectedTorrentIds;
+  T := GetFirstSelectedTorrent;
+  if (Length(Ids) = 0) or (T = nil) then Exit;
+  NextPaused := not T.TrackerPaused;
+  FRpc.SetTorrentsTrackerPaused(Ids, NextPaused);
+  RefreshFromRpc;
+end;
+
 procedure TMainForm.ActOpenWebUi(Sender: TObject);
 begin
   if FWebServer <> nil then
@@ -2487,8 +2589,12 @@ var
   I: Integer;
 begin
   for I := 0 to FOptionsPopup.Items.Count - 1 do
+  begin
     if Pos('Compact View', FOptionsPopup.Items[I].Caption) > 0 then
-      FOptionsPopup.Items[I].Checked := FCompactView;
+      FOptionsPopup.Items[I].Checked := FCompactView
+    else if Pos('Block All Tracker', FOptionsPopup.Items[I].Caption) > 0 then
+      FOptionsPopup.Items[I].Checked := FSessionConfig.TrackerPaused;
+  end;
   P := FBtnOptionsMenu.ClientToScreen(Point(0, FBtnOptionsMenu.Height));
   FOptionsPopup.PopUp(P.X, P.Y);
 end;

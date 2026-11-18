@@ -700,6 +700,7 @@ enum // NOLINT(performance-enum-size)
     TR_KEY_tracker_stats_camel_APICOMPAT,
     TR_KEY_tracker_add,
     TR_KEY_tracker_list,
+    TR_KEY_tracker_paused,
     TR_KEY_tracker_remove,
     TR_KEY_tracker_replace,
     TR_KEY_tracker_stats,

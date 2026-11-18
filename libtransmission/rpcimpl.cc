@@ -781,6 +781,7 @@ namespace make_torrent_field_helpers
     case TR_KEY_torrent_file:
     case TR_KEY_total_size:
     case TR_KEY_tracker_list:
+    case TR_KEY_tracker_paused:
     case TR_KEY_tracker_stats:
     case TR_KEY_trackers:
     case TR_KEY_upload_limit:
@@ -948,6 +949,8 @@ namespace make_torrent_field_helpers
         return tor.total_size();
     case TR_KEY_tracker_list:
         return tor.announce_list().to_string();
+    case TR_KEY_tracker_paused:
+        return tor.is_tracker_paused();
     case TR_KEY_tracker_stats:
         return make_tracker_stats_vec(tor);
     case TR_KEY_trackers:
@@ -1356,6 +1359,16 @@ namespace make_torrent_field_helpers
         if (auto const val = args_in.value_if<bool>(TR_KEY_honors_session_limits); val)
         {
             tr_torrentUseSessionLimits(tor, *val);
+        }
+
+        if (auto const val = args_in.value_if<bool>(TR_KEY_tracker_paused); val)
+        {
+            bool const was_paused = tor->is_tracker_paused();
+            tor->set_tracker_paused(*val);
+            if (was_paused && !*val && tor->is_running() && !tor->session->isTrackerPaused())
+            {
+                tr_announcerManualAnnounce(tor);
+            }
         }
 
         if (auto const val = args_in.value_if<int64_t>(TR_KEY_upload_limit); val)
@@ -2615,6 +2628,28 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
         });
 
     map.try_emplace(TR_KEY_tcp_enabled, [](tr_session const& src) -> tr_variant { return src.allowsTCP(); }, nullptr);
+
+    map.try_emplace(
+        TR_KEY_tracker_paused,
+        [](tr_session const& src) -> tr_variant { return src.isTrackerPaused(); },
+        [](tr_session& tgt, tr_variant const& src, ErrorInfo& /*err*/)
+        {
+            if (auto const val = src.value_if<bool>())
+            {
+                bool const was_paused = tgt.isTrackerPaused();
+                tgt.setTrackerPaused(*val);
+                if (was_paused && !*val)
+                {
+                    for (auto* const tor : tgt.torrents())
+                    {
+                        if (tor->is_running() && !tor->is_tracker_paused())
+                        {
+                            tr_announcerManualAnnounce(tor);
+                        }
+                    }
+                }
+            }
+        });
 
     map.try_emplace(
         TR_KEY_trash_original_torrent_files,

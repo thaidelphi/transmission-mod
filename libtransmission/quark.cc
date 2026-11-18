@@ -689,6 +689,7 @@ auto constexpr MyStatic = std::array<std::string_view, TR_N_KEYS>{
     "trackerStats"sv, // rpc
     "tracker_add"sv, // rpc
     "tracker_list"sv, // rpc
+    "tracker_paused"sv, // rpc, resume, session
     "tracker_remove"sv, // rpc
     "tracker_replace"sv, // rpc
     "tracker_stats"sv, // rpc

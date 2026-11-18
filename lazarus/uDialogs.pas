@@ -78,6 +78,7 @@ type
     LvPeers: TListView;
     LvTrackers: TListView;
     LvFiles: TListView;
+    BtnBlockTrkPackets: TButton;
 
     ChkHonorSession: TCheckBox;
     ChkDownLimit: TCheckBox;
@@ -105,6 +106,7 @@ type
     procedure BtnAddTrackerClick(Sender: TObject);
     procedure BtnRemoveTrackerClick(Sender: TObject);
     procedure BtnToggleTrackerHttpsClick(Sender: TObject);
+    procedure BtnBlockTrkPacketsClick(Sender: TObject);
   public
     constructor CreatePanel(AOwner: TComponent; ARpc: TTransmissionRpcClient);
     destructor Destroy; override;
@@ -1083,27 +1085,33 @@ begin
 
   BtnAddTrk := TButton.Create(PnlTrkBtns);
   BtnAddTrk.Parent := PnlTrkBtns;
-  BtnAddTrk.Left := 8; BtnAddTrk.Top := 5; BtnAddTrk.Width := 110; BtnAddTrk.Height := 26;
+  BtnAddTrk.Left := 8; BtnAddTrk.Top := 5; BtnAddTrk.Width := 98; BtnAddTrk.Height := 26;
   BtnAddTrk.Caption := 'Add Tracker...';
   BtnAddTrk.OnClick := @BtnAddTrackerClick;
 
   BtnEditTrk := TButton.Create(PnlTrkBtns);
   BtnEditTrk.Parent := PnlTrkBtns;
-  BtnEditTrk.Left := 124; BtnEditTrk.Top := 5; BtnEditTrk.Width := 115; BtnEditTrk.Height := 26;
+  BtnEditTrk.Left := 110; BtnEditTrk.Top := 5; BtnEditTrk.Width := 104; BtnEditTrk.Height := 26;
   BtnEditTrk.Caption := 'Edit Trackers...';
   BtnEditTrk.OnClick := @BtnEditTrackersClick;
 
   BtnRemTrk := TButton.Create(PnlTrkBtns);
   BtnRemTrk.Parent := PnlTrkBtns;
-  BtnRemTrk.Left := 245; BtnRemTrk.Top := 5; BtnRemTrk.Width := 120; BtnRemTrk.Height := 26;
+  BtnRemTrk.Left := 218; BtnRemTrk.Top := 5; BtnRemTrk.Width := 110; BtnRemTrk.Height := 26;
   BtnRemTrk.Caption := 'Remove Tracker';
   BtnRemTrk.OnClick := @BtnRemoveTrackerClick;
 
   BtnToggleTrk := TButton.Create(PnlTrkBtns);
   BtnToggleTrk.Parent := PnlTrkBtns;
-  BtnToggleTrk.Left := 371; BtnToggleTrk.Top := 5; BtnToggleTrk.Width := 190; BtnToggleTrk.Height := 26;
+  BtnToggleTrk.Left := 332; BtnToggleTrk.Top := 5; BtnToggleTrk.Width := 172; BtnToggleTrk.Height := 26;
   BtnToggleTrk.Caption := 'สลับ https:// <-> ht..tps://';
   BtnToggleTrk.OnClick := @BtnToggleTrackerHttpsClick;
+
+  BtnBlockTrkPackets := TButton.Create(PnlTrkBtns);
+  BtnBlockTrkPackets.Parent := PnlTrkBtns;
+  BtnBlockTrkPackets.Left := 510; BtnBlockTrkPackets.Top := 5; BtnBlockTrkPackets.Width := 196; BtnBlockTrkPackets.Height := 26;
+  BtnBlockTrkPackets.Caption := 'Tracker Packet: ON (คลิกปิด)';
+  BtnBlockTrkPackets.OnClick := @BtnBlockTrkPacketsClick;
 
   // Tab 5: Files
   TsFilesTab := FPageControl.AddTabSheet;
@@ -1324,6 +1332,14 @@ begin
     LblErrVal.Caption := FOwnedTorrent.ErrorString
   else
     LblErrVal.Caption := 'None';
+
+  if BtnBlockTrkPackets <> nil then
+  begin
+    if FOwnedTorrent.TrackerPaused then
+      BtnBlockTrkPackets.Caption := 'Tracker Packet: OFF (คลิกเปิด)'
+    else
+      BtnBlockTrkPackets.Caption := 'Tracker Packet: ON (คลิกปิด)';
+  end;
 
   // Update Peers ListView
   TsPeersTab.Caption := Format('Peers (%d)', [Length(FOwnedTorrent.Peers)]);
@@ -1701,6 +1717,28 @@ begin
   end;
 end;
 
+procedure TDetailsPanel.BtnBlockTrkPacketsClick(Sender: TObject);
+var
+  NextPaused: Boolean;
+begin
+  if FCurrentId <= 0 then Exit;
+  NextPaused := not FOwnedTorrent.TrackerPaused;
+  if FRpc.SetTorrentsTrackerPaused([FCurrentId], NextPaused) then
+  begin
+    RefreshDetails;
+    NotifyDataChanged;
+  end
+  else
+  begin
+    NotifyModalStart;
+    try
+      MessageDlg('Failed to toggle tracker packet state: ' + FRpc.LastError, mtError, [mbOK], 0);
+    finally
+      NotifyModalEnd;
+    end;
+  end;
+end;
+
 procedure ShowDetailsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   Torrent: TTorrentItem);
 var
@@ -1715,9 +1753,9 @@ begin
     F.Caption := Torrent.Name + ' Properties';
     F.Position := poMainFormCenter;
     F.BorderStyle := bsSizeable;
-    F.ClientWidth := 650;
+    F.ClientWidth := 720;
     F.ClientHeight := 455;
-    F.Constraints.MinWidth := 580;
+    F.Constraints.MinWidth := 680;
     F.Constraints.MinHeight := 400;
 
     PnlBottom := TPanel.Create(F);

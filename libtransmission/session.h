@@ -865,6 +865,16 @@ public:
         return settings().dht_enabled;
     }
 
+    [[nodiscard]] constexpr bool isTrackerPaused() const noexcept
+    {
+        return settings().tracker_paused;
+    }
+
+    void setTrackerPaused(bool paused) noexcept
+    {
+        settings_.tracker_paused = paused;
+    }
+
     [[nodiscard]] constexpr bool allowsLPD() const noexcept
     {
         return settings().lpd_enabled;

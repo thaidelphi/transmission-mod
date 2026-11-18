@@ -174,6 +174,10 @@ public:
     void scrape(tr_scrape_request const& request, tr_scrape_response_func on_response)
     {
         TR_ASSERT(!is_shutting_down_);
+        if (session != nullptr && session->isTrackerPaused())
+        {
+            return;
+        }
 
         if (auto const scrape_sv = request.scrape_url.sv();
             tr_strv_starts_with(scrape_sv, "http://"sv) || tr_strv_starts_with(scrape_sv, "https://"sv))
@@ -193,6 +197,10 @@ public:
     void announce(tr_announce_request const& request, tr_announce_response_func on_response)
     {
         TR_ASSERT(!is_shutting_down_ || request.event == TR_ANNOUNCE_EVENT_STOPPED);
+        if (session != nullptr && session->isTrackerPaused())
+        {
+            return;
+        }
 
         if (auto const announce_sv = request.announce_url.sv();
             tr_strv_starts_with(announce_sv, "http://"sv) || tr_strv_starts_with(announce_sv, "https://"sv))
@@ -214,6 +222,12 @@ public:
 private:
     void flushCloseMessages()
     {
+        if (session != nullptr && session->isTrackerPaused())
+        {
+            stops_.clear();
+            return;
+        }
+
         for (auto& stop : stops_)
         {
             announce(stop, [](tr_announce_response const& /*response*/) {});
@@ -967,6 +981,11 @@ void torrentAddAnnounce(tr_torrent* tor, tr_announce_event e, time_t announce_at
 {
     using namespace announce_helpers;
 
+    if (tor == nullptr || tor->is_tracker_paused() || (tor->session != nullptr && tor->session->isTrackerPaused()))
+    {
+        return;
+    }
+
     // tell each tier to announce
     for (auto& tier : tor->torrent_announcer->tiers)
     {
@@ -1218,11 +1237,14 @@ void tr_announcer_impl::removeTorrent(tr_torrent* tor)
         return;
     }
 
-    for (auto const& tier : ta->tiers)
+    if (!tor->is_tracker_paused() && (session == nullptr || !session->isTrackerPaused()))
     {
-        if (tier.isRunning && tier.lastAnnounceSucceeded)
+        for (auto const& tier : ta->tiers)
         {
-            stops_.emplace(create_announce_request(this, tor, &tier, TR_ANNOUNCE_EVENT_STOPPED));
+            if (tier.isRunning && tier.lastAnnounceSucceeded)
+            {
+                stops_.emplace(create_announce_request(this, tor, &tier, TR_ANNOUNCE_EVENT_STOPPED));
+            }
         }
     }
 
@@ -1560,6 +1582,11 @@ void scrapeAndAnnounceMore(tr_announcer_impl* announcer)
     auto scrape_me = std::vector<tr_tier*>{};
     for (auto* const tor : announcer->session->torrents())
     {
+        if (tor->is_tracker_paused() || (announcer->session != nullptr && announcer->session->isTrackerPaused()))
+        {
+            continue;
+        }
+
         for (auto& tier : tor->torrent_announcer->tiers)
         {
             if (tier.needsToAnnounce(now))
@@ -1703,7 +1730,16 @@ namespace tracker_view_helpers
             *fmt::format_to_n(buf, sizeof(buf) - 1, "{:s}", tier.last_announce_str).out = '\0';
         }
 
-        if (tier.isAnnouncing)
+        if (tor.is_tracker_paused() || (tor.session != nullptr && tor.session->isTrackerPaused()))
+        {
+            view.announceState = TR_TRACKER_INACTIVE;
+            view.scrapeState = TR_TRACKER_INACTIVE;
+            view.nextAnnounceTime = 0;
+            view.nextScrapeTime = 0;
+            auto& buf = view.lastAnnounceResult;
+            *fmt::format_to_n(buf, sizeof(buf) - 1, "{:s}", "Tracker Packets Paused"sv).out = '\0';
+        }
+        else if (tier.isAnnouncing)
         {
             view.announceState = TR_TRACKER_ACTIVE;
         }

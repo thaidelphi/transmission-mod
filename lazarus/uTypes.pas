@@ -123,6 +123,7 @@ type
     PeerLimit: Integer;               // จำนวน Peers สูงสุดที่อนุญาตให้เชื่อมต่อกับทอร์เรนต์นี้
     PrimaryTrackerHost: string;       // ชื่อโดเมนของ Tracker ตัวแรก (ใช้สำหรับตัวกรอง Tracker)
     MagnetLink: string;               // ลิงก์ Magnet (`magnet:?xt=urn:btih:...`)
+    TrackerPaused: Boolean;           // ปิดการส่ง Packet ไปหา Tracker เฉพาะทอร์เรนต์นี้หรือไม่
     Selected: Boolean;                // สถานะการถูกคลิกเลือกในตาราง UI
 
     Files: array of TTorrentFileItem;       // รายการไฟล์ย่อย (โหลดเมื่อเปิดหน้าต่าง Properties)
@@ -187,6 +188,7 @@ type
     DownloadQueueSize: Integer;         // จำนวนทอร์เรนต์ที่ดาวน์โหลดพร้อมกันได้สูงสุด
     SeedQueueEnabled: Boolean;          // เปิดจำกัดจำนวนคิวปล่อยไฟล์พร้อมกันหรือไม่
     SeedQueueSize: Integer;             // จำนวนทอร์เรนต์ที่ปล่อยไฟล์พร้อมกันได้สูงสุด
+    TrackerPaused: Boolean;             // ปิดการส่ง Packet ไปหา Tracker ทั้งโปรแกรมหรือไม่
   end;
 
   { โครงสร้างเก็บข้อมูลสถิติของโปรแกรม (ตรงกับผลลัพธ์ของคำสั่ง RPC `session-stats`) }

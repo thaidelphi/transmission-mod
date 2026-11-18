@@ -80,6 +80,7 @@ type
     function RenameTorrentPath(TorrentId: Integer; const OldPath, NewName: string): Boolean;
     function QueueMove(const Ids: array of Integer; const DirectionMethod: string): Boolean;
     function SetTorrentOptions(TorrentId: Integer; Args: TJSONObject): Boolean;
+    function SetTorrentsTrackerPaused(const Ids: array of Integer; Paused: Boolean): Boolean;
 
     { คำสั่งเครือข่าย พื้นที่ว่าง และการสร้างไฟล์ .torrent }
     function TestPeerPort(out IsOpen: Boolean): Boolean;
@@ -486,6 +487,7 @@ begin
     Config.DownloadQueueSize := JsonGetInt(Args, 'download-queue-size', 5);
     Config.SeedQueueEnabled := JsonGetBool(Args, 'seed-queue-enabled', False);
     Config.SeedQueueSize := JsonGetInt(Args, 'seed-queue-size', 10);
+    Config.TrackerPaused := JsonGetBool(Args, 'tracker_paused', False);
   finally
     Resp.Free;
   end;
@@ -545,7 +547,7 @@ end;
 { ดึงรายการทอร์เรนต์ทั้งหมดสำหรับแสดงผลในหน้าต่างหลักด้วยคำสั่ง `torrent-get` }
 function TTransmissionRpcClient.FetchTorrents(List: TList): Boolean;
 const
-  FieldNames: array[0..33] of string = (
+  FieldNames: array[0..34] of string = (
     'id', 'name', 'hashString', 'status', 'percentDone',
     'metadataPercentComplete', 'totalSize', 'sizeWhenDone', 'leftUntilDone',
     'haveValid', 'haveUnchecked', 'rateDownload', 'rateUpload', 'uploadRatio',
@@ -553,7 +555,7 @@ const
     'peersSendingToUs', 'peersGettingFromUs', 'error', 'errorString',
     'addedDate', 'doneDate', 'activityDate', 'downloadDir', 'isPrivate',
     'isFinished', 'queuePosition', 'bandwidthPriority', 'seedRatioMode',
-    'seedRatioLimit', 'magnetLink', 'trackerStats'
+    'seedRatioLimit', 'magnetLink', 'tracker_paused', 'trackerStats'
   );
 var
   Args, Resp, RespArgs, TorObj, TrkObj: TJSONObject;
@@ -614,6 +616,7 @@ begin
       Item.SeedRatioMode := JsonGetInt(TorObj, 'seedRatioMode', TR_RATIOLIMIT_GLOBAL);
       Item.SeedRatioLimit := JsonGetFloat(TorObj, 'seedRatioLimit', 2.0);
       Item.MagnetLink := JsonGetStr(TorObj, 'magnetLink', '');
+      Item.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', False);
 
       TrkArr := TorObj.Find('trackerStats') as TJSONArray;
       if (TrkArr <> nil) and (TrkArr.Count > 0) then
@@ -650,14 +653,17 @@ end;
 { ดึงข้อมูลเชิงลึกของทอร์เรนต์เฉพาะตัว (Files, Peers, Trackers, Options) สำหรับหน้าต่าง Properties }
 function TTransmissionRpcClient.FetchTorrentDetails(Torrent: TTorrentItem): Boolean;
 const
-  DetailFields: array[0..30] of string = (
-    'id', 'name', 'status', 'percentDone', 'sizeWhenDone', 'totalSize',
+  DetailFields: array[0..42] of string = (
+    'id', 'name', 'hashString', 'status', 'percentDone', 'sizeWhenDone', 'totalSize',
+    'haveValid', 'haveUnchecked', 'downloadedEver', 'uploadedEver',
     'rateDownload', 'rateUpload', 'uploadRatio', 'eta', 'activityDate',
+    'addedDate', 'doneDate', 'downloadDir', 'isPrivate', 'errorString',
     'creator', 'comment', 'pieceCount', 'pieceSize',
     'secondsDownloading', 'secondsSeeding', 'honorsSessionLimits',
     'downloadLimited', 'downloadLimit', 'uploadLimited', 'uploadLimit',
     'seedRatioMode', 'seedRatioLimit', 'seedIdleMode', 'seedIdleLimit',
-    'peer-limit', 'files', 'fileStats', 'peers', 'trackerStats'
+    'peer-limit', 'tracker_paused', 'files', 'fileStats', 'peers', 'trackerStats',
+    'magnetLink'
   );
 var
   Args, Resp, RespArgs, TorObj, SubObj, StatObj: TJSONObject;
@@ -687,13 +693,26 @@ begin
     TorObj := TorArr.Items[0] as TJSONObject;
     if TorObj = nil then Exit(False);
 
+    Torrent.Name := JsonGetStr(TorObj, 'name', Torrent.Name);
+    Torrent.HashString := JsonGetStr(TorObj, 'hashString', Torrent.HashString);
     Torrent.Status := JsonGetInt(TorObj, 'status', Torrent.Status);
     Torrent.PercentDone := JsonGetFloat(TorObj, 'percentDone', Torrent.PercentDone);
+    Torrent.TotalSize := JsonGetInt64(TorObj, 'totalSize', Torrent.TotalSize);
+    Torrent.SizeWhenDone := JsonGetInt64(TorObj, 'sizeWhenDone', Torrent.SizeWhenDone);
+    Torrent.HaveValid := JsonGetInt64(TorObj, 'haveValid', Torrent.HaveValid);
+    Torrent.HaveUnchecked := JsonGetInt64(TorObj, 'haveUnchecked', Torrent.HaveUnchecked);
+    Torrent.DownloadedEver := JsonGetInt64(TorObj, 'downloadedEver', Torrent.DownloadedEver);
+    Torrent.UploadedEver := JsonGetInt64(TorObj, 'uploadedEver', Torrent.UploadedEver);
     Torrent.RateDownload := JsonGetInt64(TorObj, 'rateDownload', Torrent.RateDownload);
     Torrent.RateUpload := JsonGetInt64(TorObj, 'rateUpload', Torrent.RateUpload);
     Torrent.UploadRatio := JsonGetFloat(TorObj, 'uploadRatio', Torrent.UploadRatio);
     Torrent.ETA := JsonGetInt64(TorObj, 'eta', Torrent.ETA);
     Torrent.ActivityDate := JsonGetInt64(TorObj, 'activityDate', Torrent.ActivityDate);
+    Torrent.AddedDate := JsonGetInt64(TorObj, 'addedDate', Torrent.AddedDate);
+    Torrent.DoneDate := JsonGetInt64(TorObj, 'doneDate', Torrent.DoneDate);
+    Torrent.DownloadDir := JsonGetStr(TorObj, 'downloadDir', Torrent.DownloadDir);
+    Torrent.IsPrivate := JsonGetBool(TorObj, 'isPrivate', Torrent.IsPrivate);
+    Torrent.ErrorString := JsonGetStr(TorObj, 'errorString', '');
     Torrent.Creator := JsonGetStr(TorObj, 'creator', '');
     Torrent.Comment := JsonGetStr(TorObj, 'comment', '');
     Torrent.PieceCount := JsonGetInt(TorObj, 'pieceCount', 0);
@@ -710,6 +729,8 @@ begin
     Torrent.SeedIdleMode := JsonGetInt(TorObj, 'seedIdleMode', 0);
     Torrent.SeedIdleLimit := JsonGetInt(TorObj, 'seedIdleLimit', 30);
     Torrent.PeerLimit := JsonGetInt(TorObj, 'peer-limit', 50);
+    Torrent.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', False);
+    Torrent.MagnetLink := JsonGetStr(TorObj, 'magnetLink', Torrent.MagnetLink);
 
     FilesArr := TorObj.Find('files') as TJSONArray;
     StatsArr := TorObj.Find('fileStats') as TJSONArray;
@@ -994,6 +1015,17 @@ begin
   IdsArr := TJSONArray.Create;
   IdsArr.Add(TorrentId);
   Args.Add('ids', IdsArr);
+  Result := SendRpcRequest('torrent-set', Args, Resp);
+  Resp.Free;
+end;
+
+function TTransmissionRpcClient.SetTorrentsTrackerPaused(const Ids: array of Integer;
+  Paused: Boolean): Boolean;
+var
+  Args, Resp: TJSONObject;
+begin
+  Args := BuildIdsArg(Ids);
+  Args.Add('tracker_paused', Paused);
   Result := SendRpcRequest('torrent-set', Args, Resp);
   Resp.Free;
 end;
