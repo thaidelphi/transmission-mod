@@ -150,6 +150,9 @@ function ShowRelocateDialog(Owner: TComponent; const CurrentDir: string;
 
 procedure ShowStatsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient);
 
+function ShowHistoryDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
+  History: TDownloadHistoryManager; const DataDir, IniPath: string): Boolean;
+
 implementation
 
 function UnixToDateTimeStr(Ts: Int64): string;
@@ -2030,6 +2033,7 @@ type
     ChkWatchDir: TCheckBox;
     EdtWatchDir: TEdit;
     ChkWatchDelete: TCheckBox;
+    EdtDataDir: TEdit;
 
     // 2: Tasks (เหมือนภาพตัวอย่าง BitComet)
     ChkStartAdded: TCheckBox;
@@ -2085,6 +2089,7 @@ type
     procedure BtnBrowseSaveDirClick(Sender: TObject);
     procedure BtnBrowseIncDirClick(Sender: TObject);
     procedure BtnBrowseWatchDirClick(Sender: TObject);
+    procedure BtnBrowseDataDirClick(Sender: TObject);
     procedure BtnTestPortClick(Sender: TObject);
     procedure BtnUpdateBlocklistClick(Sender: TObject);
     procedure BtnOpenWebClientClick(Sender: TObject);
@@ -2165,6 +2170,15 @@ begin
     EdtWatchDir.Text := Dir;
 end;
 
+procedure TPrefsForm.BtnBrowseDataDirClick(Sender: TObject);
+var
+  Dir: string;
+begin
+  Dir := EdtDataDir.Text;
+  if SelectDirectory('Select Persistent Data & History Folder (ควรเลือกนอกไดรฟ์ C:)', '', Dir) then
+    EdtDataDir.Text := Dir;
+end;
+
 procedure TPrefsForm.BtnTestPortClick(Sender: TObject);
 var
   OpenOk: Boolean;
@@ -2230,6 +2244,8 @@ begin
   DesktopPtr^.WatchDirEnabled := ChkWatchDir.Checked;
   DesktopPtr^.WatchDir := Trim(EdtWatchDir.Text);
   DesktopPtr^.WatchDirDeleteOriginal := ChkWatchDelete.Checked;
+  if Trim(EdtDataDir.Text) <> '' then
+    DesktopPtr^.DataDir := Trim(EdtDataDir.Text);
   SetWindowsAutoStart(ChkAutoStart.Checked, ChkStartMinimized.Checked);
 
   Args := TJSONObject.Create;
@@ -2307,7 +2323,7 @@ var
   DivLine: TBevel;
   Gb1, Gb2, Gb3, Gb4: TGroupBox;
   Lbl: TLabel;
-  BtnBrowse, BtnBrowseInc, BtnBrowseWatch, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel, BtnApply: TButton;
+  BtnBrowse, BtnBrowseInc, BtnBrowseWatch, BtnBrowseData, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel, BtnApply: TButton;
   AutoStartOn, AutoStartMin: Boolean;
   I: Integer;
 
@@ -2456,44 +2472,61 @@ begin
     F.ChkUtp := MakeCheck(Gb2, 14, 116, 'Enable µTP (Micro Transport Protocol)', Config.UtpEnabled);
 
     // --- Page 1: Directories ---
-    Gb1 := MakeGroup(F.Pages[1], 8, 92, 'Default Download Directory');
-    MakeLabel(Gb1, 14, 22, 'Save downloaded files to:');
+    Gb1 := MakeGroup(F.Pages[1], 6, 72, 'Default Download Directory');
+    MakeLabel(Gb1, 14, 18, 'Save downloaded files to:');
     F.EdtDownloadDir := TEdit.Create(Gb1);
     F.EdtDownloadDir.Parent := Gb1;
-    F.EdtDownloadDir.Left := 14; F.EdtDownloadDir.Top := 42; F.EdtDownloadDir.Width := 412;
+    F.EdtDownloadDir.Left := 14; F.EdtDownloadDir.Top := 38; F.EdtDownloadDir.Width := 412;
     F.EdtDownloadDir.Text := Config.DownloadDir;
     BtnBrowse := TButton.Create(Gb1);
     BtnBrowse.Parent := Gb1;
-    BtnBrowse.Left := 434; BtnBrowse.Top := 40; BtnBrowse.Width := 86; BtnBrowse.Height := 25;
+    BtnBrowse.Left := 434; BtnBrowse.Top := 36; BtnBrowse.Width := 86; BtnBrowse.Height := 25;
     BtnBrowse.Caption := 'Browse...';
     BtnBrowse.OnClick := @F.BtnBrowseSaveDirClick;
 
-    Gb2 := MakeGroup(F.Pages[1], 108, 122, 'Temporary / Incomplete Files');
-    F.ChkIncompleteDir := MakeCheck(Gb2, 14, 22, 'Store incomplete downloads in temporary folder:', Config.IncompleteDirEnabled);
+    Gb2 := MakeGroup(F.Pages[1], 82, 102, 'Temporary / Incomplete Files');
+    F.ChkIncompleteDir := MakeCheck(Gb2, 14, 18, 'Store incomplete downloads in temporary folder:', Config.IncompleteDirEnabled);
     F.EdtIncompleteDir := TEdit.Create(Gb2);
     F.EdtIncompleteDir.Parent := Gb2;
-    F.EdtIncompleteDir.Left := 14; F.EdtIncompleteDir.Top := 48; F.EdtIncompleteDir.Width := 412;
+    F.EdtIncompleteDir.Left := 14; F.EdtIncompleteDir.Top := 42; F.EdtIncompleteDir.Width := 412;
     F.EdtIncompleteDir.Text := Config.IncompleteDir;
     BtnBrowseInc := TButton.Create(Gb2);
     BtnBrowseInc.Parent := Gb2;
-    BtnBrowseInc.Left := 434; BtnBrowseInc.Top := 46; BtnBrowseInc.Width := 86; BtnBrowseInc.Height := 25;
+    BtnBrowseInc.Left := 434; BtnBrowseInc.Top := 40; BtnBrowseInc.Width := 86; BtnBrowseInc.Height := 25;
     BtnBrowseInc.Caption := 'Browse...';
     BtnBrowseInc.OnClick := @F.BtnBrowseIncDirClick;
-    F.ChkRenamePartial := MakeCheck(Gb2, 14, 84, 'Append ".part" file extension to unfinished files', Config.RenamePartialFiles);
+    F.ChkRenamePartial := MakeCheck(Gb2, 14, 72, 'Append ".part" file extension to unfinished files', Config.RenamePartialFiles);
     F.ChkRenamePartial.OnChange := @F.SyncPartialCheck;
 
-    Gb3 := MakeGroup(F.Pages[1], 238, 132, 'Watch Folder (โฟลเดอร์เฝ้าดูไฟล์ .torrent อัตโนมัติ)');
-    F.ChkWatchDir := MakeCheck(Gb3, 14, 24, 'Automatically add .torrent files from Watch Folder:', DesktopPrefs.WatchDirEnabled);
+    Gb3 := MakeGroup(F.Pages[1], 188, 104, 'Watch Folder (โฟลเดอร์เฝ้าดูไฟล์ .torrent อัตโนมัติ)');
+    F.ChkWatchDir := MakeCheck(Gb3, 14, 18, 'Automatically add .torrent files from Watch Folder:', DesktopPrefs.WatchDirEnabled);
     F.EdtWatchDir := TEdit.Create(Gb3);
     F.EdtWatchDir.Parent := Gb3;
-    F.EdtWatchDir.Left := 14; F.EdtWatchDir.Top := 52; F.EdtWatchDir.Width := 412;
+    F.EdtWatchDir.Left := 14; F.EdtWatchDir.Top := 42; F.EdtWatchDir.Width := 412;
     F.EdtWatchDir.Text := DesktopPrefs.WatchDir;
     BtnBrowseWatch := TButton.Create(Gb3);
     BtnBrowseWatch.Parent := Gb3;
-    BtnBrowseWatch.Left := 434; BtnBrowseWatch.Top := 50; BtnBrowseWatch.Width := 86; BtnBrowseWatch.Height := 25;
+    BtnBrowseWatch.Left := 434; BtnBrowseWatch.Top := 40; BtnBrowseWatch.Width := 86; BtnBrowseWatch.Height := 25;
     BtnBrowseWatch.Caption := 'Browse...';
     BtnBrowseWatch.OnClick := @F.BtnBrowseWatchDirClick;
-    F.ChkWatchDelete := MakeCheck(Gb3, 14, 88, 'Delete .torrent file after adding (otherwise rename to .added)', DesktopPrefs.WatchDirDeleteOriginal);
+    F.ChkWatchDelete := MakeCheck(Gb3, 14, 72, 'Delete .torrent file after adding (otherwise rename to .added)', DesktopPrefs.WatchDirDeleteOriginal);
+
+    Gb4 := MakeGroup(F.Pages[1], 296, 114, 'Persistent Data & History Folder (เก็บประวัติข้ามการล้าง Windows)');
+    MakeLabel(Gb4, 14, 20, 'Config, Torrents, Resume & History directory (ควรวางไว้นอกไดรฟ์ C:):');
+    F.EdtDataDir := TEdit.Create(Gb4);
+    F.EdtDataDir.Parent := Gb4;
+    F.EdtDataDir.Left := 14; F.EdtDataDir.Top := 42; F.EdtDataDir.Width := 412;
+    if Trim(DesktopPrefs.DataDir) <> '' then
+      F.EdtDataDir.Text := DesktopPrefs.DataDir
+    else
+      F.EdtDataDir.Text := GetDefaultPortableDataDir;
+    BtnBrowseData := TButton.Create(Gb4);
+    BtnBrowseData.Parent := Gb4;
+    BtnBrowseData.Left := 434; BtnBrowseData.Top := 40; BtnBrowseData.Width := 86; BtnBrowseData.Height := 25;
+    BtnBrowseData.Caption := 'Browse...';
+    BtnBrowseData.OnClick := @F.BtnBrowseDataDirClick;
+    Lbl := MakeLabel(Gb4, 14, 74, 'ค่าเริ่มต้นเป็นแบบ Portable (.\data ข้างตัวโปรแกรม) — หากเปลี่ยนโฟลเดอร์ใหม่จะมีผลหลังเปิดโปรแกรมใหม่');
+    Lbl.Width := 504; Lbl.Font.Color := clGrayText;
 
     // --- Page 2: Tasks (คล้ายหน้า Tasks ของ BitComet) ---
     Gb1 := MakeGroup(F.Pages[2], 8, 130, 'Download');
@@ -2859,6 +2892,386 @@ begin
     F.RefreshTimer.Enabled := True;
 
     F.ShowModal;
+  finally
+    F.Free;
+  end;
+end;
+
+{ ============================================================================ }
+{ 10. Download History & Portable Backup Dialog                                }
+{ ============================================================================ }
+type
+  THistoryForm = class(TForm)
+  public
+    FRpc: TTransmissionRpcClient;
+    FHistory: TDownloadHistoryManager;
+    FDataDir: string;
+    FIniPath: string;
+    FRestoredFromBackup: Boolean;
+
+    PnlTop: TPanel;
+    LblSearch: TLabel;
+    EdtSearch: TEdit;
+    LblSummary: TLabel;
+    LvHistory: TListView;
+    PnlBottom: TPanel;
+    BtnReDownload: TButton;
+    BtnCopyMagnet: TButton;
+    BtnOpenFolder: TButton;
+    BtnDelete: TButton;
+    BtnClear: TButton;
+    BtnExport: TButton;
+    BtnImport: TButton;
+    BtnClose: TButton;
+
+    function GetSelectedHistoryItem: THistoryItem;
+    function GetHistoryFilePath: string;
+    procedure RefreshList;
+    procedure UpdateButtons;
+    procedure EdtSearchChange(Sender: TObject);
+    procedure LvHistorySelectItem(Sender: TObject; Item: TListItem; Selected: Boolean);
+    procedure LvHistoryDblClick(Sender: TObject);
+    procedure BtnReDownloadClick(Sender: TObject);
+    procedure BtnCopyMagnetClick(Sender: TObject);
+    procedure BtnOpenFolderClick(Sender: TObject);
+    procedure BtnDeleteClick(Sender: TObject);
+    procedure BtnClearClick(Sender: TObject);
+    procedure BtnExportClick(Sender: TObject);
+    procedure BtnImportClick(Sender: TObject);
+  end;
+
+function THistoryForm.GetHistoryFilePath: string;
+begin
+  Result := IncludeTrailingPathDelimiter(FDataDir) + 'download_history.json';
+end;
+
+function THistoryForm.GetSelectedHistoryItem: THistoryItem;
+begin
+  Result := nil;
+  if (LvHistory <> nil) and (LvHistory.Selected <> nil) and (LvHistory.Selected.Data <> nil) then
+    Result := THistoryItem(LvHistory.Selected.Data);
+end;
+
+procedure THistoryForm.RefreshList;
+var
+  I, CompCount: Integer;
+  H: THistoryItem;
+  FilterStr: string;
+  Li: TListItem;
+begin
+  if (FHistory = nil) or (LvHistory = nil) then Exit;
+  FilterStr := LowerCase(Trim(EdtSearch.Text));
+  CompCount := 0;
+
+  LvHistory.Items.BeginUpdate;
+  try
+    LvHistory.Items.Clear;
+    for I := 0 to FHistory.Count - 1 do
+    begin
+      H := FHistory.GetItem(I);
+      if H = nil then Continue;
+      if H.Completed then Inc(CompCount);
+
+      if (FilterStr <> '') and
+         (Pos(FilterStr, LowerCase(H.Name)) = 0) and
+         (Pos(FilterStr, LowerCase(H.DownloadDir)) = 0) and
+         (Pos(FilterStr, LowerCase(H.HashString)) = 0) then
+        Continue;
+
+      Li := LvHistory.Items.Add;
+      Li.Caption := H.Name;
+      Li.Data := H;
+      Li.SubItems.Add(FormatSize(H.TotalSize));
+      Li.SubItems.Add(FormatSize(H.DownloadedEver));
+      Li.SubItems.Add(FormatSize(H.UploadedEver));
+      Li.SubItems.Add(FormatRatio(H.UploadRatio));
+      if H.Completed then
+        Li.SubItems.Add('Completed')
+      else
+        Li.SubItems.Add('In Progress');
+      Li.SubItems.Add(UnixToDateTimeStr(H.AddedDate));
+      if H.DoneDate > 0 then
+        Li.SubItems.Add(UnixToDateTimeStr(H.DoneDate))
+      else
+        Li.SubItems.Add('-');
+      Li.SubItems.Add(H.DownloadDir);
+    end;
+  finally
+    LvHistory.Items.EndUpdate;
+  end;
+
+  LblSummary.Caption := Format('Entries: %d (%d completed) | Data Folder: %s',
+    [FHistory.Count, CompCount, FDataDir]);
+  UpdateButtons;
+end;
+
+procedure THistoryForm.UpdateButtons;
+var
+  H: THistoryItem;
+begin
+  H := GetSelectedHistoryItem;
+  BtnReDownload.Enabled := (H <> nil) and (H.MagnetLink <> '') and (FRpc <> nil);
+  BtnCopyMagnet.Enabled := (H <> nil) and (H.MagnetLink <> '');
+  BtnOpenFolder.Enabled := (H <> nil) and (H.DownloadDir <> '');
+  BtnDelete.Enabled := (H <> nil);
+  BtnClear.Enabled := (FHistory <> nil) and (FHistory.Count > 0);
+end;
+
+procedure THistoryForm.EdtSearchChange(Sender: TObject);
+begin
+  RefreshList;
+end;
+
+procedure THistoryForm.LvHistorySelectItem(Sender: TObject; Item: TListItem; Selected: Boolean);
+begin
+  UpdateButtons;
+end;
+
+procedure THistoryForm.LvHistoryDblClick(Sender: TObject);
+begin
+  if BtnReDownload.Enabled then
+    BtnReDownloadClick(Sender);
+end;
+
+procedure THistoryForm.BtnReDownloadClick(Sender: TObject);
+var
+  H: THistoryItem;
+  DestDir, AddedName: string;
+begin
+  H := GetSelectedHistoryItem;
+  if (H = nil) or (FRpc = nil) then Exit;
+  if H.MagnetLink = '' then
+  begin
+    MessageDlg('Re-download', 'No magnet link is saved for this entry.', mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  DestDir := H.DownloadDir;
+  if FRpc.AddTorrentUrl(H.MagnetLink, DestDir, True, TR_PRI_NORMAL, AddedName) then
+    MessageDlg('Re-download', 'Added "' + H.Name + '" back to Transmission queue.', mtInformation, [mbOK], 0)
+  else
+    MessageDlg('Re-download Error', 'Failed to re-add torrent: ' + FRpc.LastError, mtError, [mbOK], 0);
+end;
+
+procedure THistoryForm.BtnCopyMagnetClick(Sender: TObject);
+var
+  H: THistoryItem;
+begin
+  H := GetSelectedHistoryItem;
+  if (H = nil) or (H.MagnetLink = '') then Exit;
+  Clipboard.AsText := H.MagnetLink;
+end;
+
+procedure THistoryForm.BtnOpenFolderClick(Sender: TObject);
+var
+  H: THistoryItem;
+begin
+  H := GetSelectedHistoryItem;
+  if H = nil then Exit;
+  if (H.DownloadDir <> '') and DirectoryExists(H.DownloadDir) then
+    OpenDocument(H.DownloadDir)
+  else
+    MessageDlg('Open Folder', 'Folder not found: ' + H.DownloadDir, mtWarning, [mbOK], 0);
+end;
+
+procedure THistoryForm.BtnDeleteClick(Sender: TObject);
+var
+  H: THistoryItem;
+begin
+  H := GetSelectedHistoryItem;
+  if (H = nil) or (FHistory = nil) then Exit;
+  FHistory.RemoveByHash(H.HashString);
+  FHistory.SaveToFile(GetHistoryFilePath);
+  RefreshList;
+end;
+
+procedure THistoryForm.BtnClearClick(Sender: TObject);
+begin
+  if (FHistory = nil) or (FHistory.Count = 0) then Exit;
+  if MessageDlg('Clear History', 'Remove all saved download history entries?', mtConfirmation, [mbYes, mbNo], 0) = mrYes then
+  begin
+    FHistory.Clear;
+    FHistory.SaveToFile(GetHistoryFilePath);
+    RefreshList;
+  end;
+end;
+
+procedure THistoryForm.BtnExportClick(Sender: TObject);
+var
+  Dlg: TSaveDialog;
+begin
+  Dlg := TSaveDialog.Create(Self);
+  try
+    Dlg.Title := 'Export Portable Backup';
+    Dlg.Filter := 'Transmission Backup (*.trbak)|*.trbak|All files (*.*)|*.*';
+    Dlg.DefaultExt := 'trbak';
+    Dlg.FileName := 'transmission_backup_' + FormatDateTime('yyyymmdd', Now) + '.trbak';
+    if Dlg.Execute then
+    begin
+      if ExportPortableBackup(Dlg.FileName, FDataDir, FIniPath, FHistory) then
+        MessageDlg('Export Backup',
+          'Backup exported successfully to:' + LineEnding + Dlg.FileName + LineEnding + LineEnding +
+          'Copy this file (or the entire Data Folder) to restore history and torrents after reinstalling Windows.',
+          mtInformation, [mbOK], 0)
+      else
+        MessageDlg('Export Error', 'Failed to export backup file.', mtError, [mbOK], 0);
+    end;
+  finally
+    Dlg.Free;
+  end;
+end;
+
+procedure THistoryForm.BtnImportClick(Sender: TObject);
+var
+  Dlg: TOpenDialog;
+  RestoredCount: Integer;
+begin
+  Dlg := TOpenDialog.Create(Self);
+  try
+    Dlg.Title := 'Import Portable Backup';
+    Dlg.Filter := 'Transmission Backup (*.trbak)|*.trbak|All files (*.*)|*.*';
+    if Dlg.Execute then
+    begin
+      if ImportPortableBackup(Dlg.FileName, FDataDir, FHistory, RestoredCount) then
+      begin
+        FRestoredFromBackup := True;
+        RefreshList;
+        MessageDlg('Import Backup',
+          Format('Restored %d history entries and %d session/resume files.',
+            [FHistory.Count, RestoredCount]),
+          mtInformation, [mbOK], 0);
+      end
+      else
+        MessageDlg('Import Error', 'Failed to import backup file (invalid or unreadable .trbak).', mtError, [mbOK], 0);
+    end;
+  finally
+    Dlg.Free;
+  end;
+end;
+
+function ShowHistoryDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
+  History: TDownloadHistoryManager; const DataDir, IniPath: string): Boolean;
+var
+  F: THistoryForm;
+  Col: TListColumn;
+begin
+  Result := False;
+  F := THistoryForm.CreateNew(Owner);
+  try
+    F.FRpc := Rpc;
+    F.FHistory := History;
+    F.FDataDir := DataDir;
+    F.FIniPath := IniPath;
+    F.FRestoredFromBackup := False;
+    F.Caption := 'Download History & Portable Backup';
+    F.Width := 940;
+    F.Height := 520;
+    F.Constraints.MinWidth := 740;
+    F.Constraints.MinHeight := 360;
+    F.Position := poScreenCenter;
+
+    F.PnlTop := TPanel.Create(F);
+    F.PnlTop.Parent := F;
+    F.PnlTop.Align := alTop;
+    F.PnlTop.Height := 54;
+    F.PnlTop.BevelOuter := bvNone;
+
+    F.LblSearch := TLabel.Create(F.PnlTop);
+    F.LblSearch.Parent := F.PnlTop;
+    F.LblSearch.Left := 12; F.LblSearch.Top := 10;
+    F.LblSearch.Caption := 'Filter:';
+
+    F.EdtSearch := TEdit.Create(F.PnlTop);
+    F.EdtSearch.Parent := F.PnlTop;
+    F.EdtSearch.Left := 54; F.EdtSearch.Top := 6; F.EdtSearch.Width := 260;
+    F.EdtSearch.TextHint := 'Search torrent name, hash, or folder...';
+    F.EdtSearch.OnChange := @F.EdtSearchChange;
+
+    F.LblSummary := TLabel.Create(F.PnlTop);
+    F.LblSummary.Parent := F.PnlTop;
+    F.LblSummary.Left := 12; F.LblSummary.Top := 33;
+    F.LblSummary.Caption := '';
+
+    F.LvHistory := TListView.Create(F);
+    F.LvHistory.Parent := F;
+    F.LvHistory.Align := alClient;
+    F.LvHistory.ViewStyle := vsReport;
+    F.LvHistory.RowSelect := True;
+    F.LvHistory.ReadOnly := True;
+    F.LvHistory.GridLines := True;
+    F.LvHistory.HideSelection := False;
+    F.LvHistory.OnSelectItem := @F.LvHistorySelectItem;
+    F.LvHistory.OnDblClick := @F.LvHistoryDblClick;
+
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Name'; Col.Width := 230;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Size'; Col.Width := 80;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Downloaded'; Col.Width := 85;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Uploaded'; Col.Width := 85;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Ratio'; Col.Width := 55;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Status'; Col.Width := 80;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Added'; Col.Width := 115;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Completed'; Col.Width := 115;
+    Col := F.LvHistory.Columns.Add; Col.Caption := 'Save Folder'; Col.Width := 190;
+
+    F.PnlBottom := TPanel.Create(F);
+    F.PnlBottom.Parent := F;
+    F.PnlBottom.Align := alBottom;
+    F.PnlBottom.Height := 44;
+    F.PnlBottom.BevelOuter := bvNone;
+
+    F.BtnReDownload := TButton.Create(F.PnlBottom);
+    F.BtnReDownload.Parent := F.PnlBottom;
+    F.BtnReDownload.Left := 12; F.BtnReDownload.Top := 9; F.BtnReDownload.Width := 94;
+    F.BtnReDownload.Caption := 'Re-download';
+    F.BtnReDownload.OnClick := @F.BtnReDownloadClick;
+
+    F.BtnCopyMagnet := TButton.Create(F.PnlBottom);
+    F.BtnCopyMagnet.Parent := F.PnlBottom;
+    F.BtnCopyMagnet.Left := 112; F.BtnCopyMagnet.Top := 9; F.BtnCopyMagnet.Width := 92;
+    F.BtnCopyMagnet.Caption := 'Copy Magnet';
+    F.BtnCopyMagnet.OnClick := @F.BtnCopyMagnetClick;
+
+    F.BtnOpenFolder := TButton.Create(F.PnlBottom);
+    F.BtnOpenFolder.Parent := F.PnlBottom;
+    F.BtnOpenFolder.Left := 210; F.BtnOpenFolder.Top := 9; F.BtnOpenFolder.Width := 88;
+    F.BtnOpenFolder.Caption := 'Open Folder';
+    F.BtnOpenFolder.OnClick := @F.BtnOpenFolderClick;
+
+    F.BtnDelete := TButton.Create(F.PnlBottom);
+    F.BtnDelete.Parent := F.PnlBottom;
+    F.BtnDelete.Left := 304; F.BtnDelete.Top := 9; F.BtnDelete.Width := 82;
+    F.BtnDelete.Caption := 'Delete Entry';
+    F.BtnDelete.OnClick := @F.BtnDeleteClick;
+
+    F.BtnClear := TButton.Create(F.PnlBottom);
+    F.BtnClear.Parent := F.PnlBottom;
+    F.BtnClear.Left := 392; F.BtnClear.Top := 9; F.BtnClear.Width := 70;
+    F.BtnClear.Caption := 'Clear All';
+    F.BtnClear.OnClick := @F.BtnClearClick;
+
+    F.BtnExport := TButton.Create(F.PnlBottom);
+    F.BtnExport.Parent := F.PnlBottom;
+    F.BtnExport.Left := 482; F.BtnExport.Top := 9; F.BtnExport.Width := 112;
+    F.BtnExport.Caption := 'Export Backup...';
+    F.BtnExport.OnClick := @F.BtnExportClick;
+
+    F.BtnImport := TButton.Create(F.PnlBottom);
+    F.BtnImport.Parent := F.PnlBottom;
+    F.BtnImport.Left := 600; F.BtnImport.Top := 9; F.BtnImport.Width := 112;
+    F.BtnImport.Caption := 'Import Backup...';
+    F.BtnImport.OnClick := @F.BtnImportClick;
+
+    F.BtnClose := TButton.Create(F.PnlBottom);
+    F.BtnClose.Parent := F.PnlBottom;
+    F.BtnClose.Left := 848; F.BtnClose.Top := 9; F.BtnClose.Width := 80;
+    F.BtnClose.Anchors := [akTop, akRight];
+    F.BtnClose.Caption := 'Close';
+    F.BtnClose.Default := True;
+    F.BtnClose.Cancel := True;
+    F.BtnClose.ModalResult := mrClose;
+
+    F.RefreshList;
+    F.ShowModal;
+    Result := F.FRestoredFromBackup;
   finally
     F.Free;
   end;

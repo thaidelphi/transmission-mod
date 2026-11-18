@@ -12,7 +12,7 @@ unit uTypes;
 interface
 
 uses
-  Classes, SysUtils, Math{$IFDEF WINDOWS}, Registry, Windows{$ENDIF};
+  Classes, SysUtils, Math, fpjson, jsonparser, base64{$IFDEF WINDOWS}, Registry, Windows{$ENDIF};
 
 const
   { ค่าคงที่สถานะของทอร์เรนต์ (ตรงกับ enum tr_torrent_activity ใน libtransmission) }
@@ -203,6 +203,43 @@ type
     WatchDirEnabled: Boolean;        // เปิดใช้งาน Watch Folder ดูไฟล์ .torrent อัตโนมัติ
     WatchDir: string;                // พาธของ Watch Folder
     WatchDirDeleteOriginal: Boolean; // ลบไฟล์ .torrent ต้นฉบับหลังแอด (False = เปลี่ยนเป็น .added)
+    DataDir: string;                 // โฟลเดอร์เก็บประวัติและข้อมูล .torrent/.resume ถาวร (รองรับย้ายจาก C:\ เพื่อกันล้างเครื่อง)
+  end;
+
+  { รายการประวัติการดาวน์โหลดถาวร (เก็บไว้แม้ลบออกจากรายการหลักหรือล้าง Windows ใหม่) }
+  THistoryItem = class
+  public
+    HashString: string;
+    Name: string;
+    TotalSize: Int64;
+    DownloadedEver: Int64;
+    UploadedEver: Int64;
+    UploadRatio: Double;
+    DownloadDir: string;
+    MagnetLink: string;
+    AddedDate: Int64;
+    DoneDate: Int64;
+    LastSeenDate: Int64;
+    Completed: Boolean;
+  end;
+
+  { ตัวจัดการประวัติการดาวน์โหลดถาวร (download_history.json) และการสำรอง/กู้คืนข้อมูล (.trbak) }
+  TDownloadHistoryManager = class
+  private
+    FItems: TList;
+    FDirty: Boolean;
+    function FindByHash(const HashStr: string): THistoryItem;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    procedure Clear;
+    function Count: Integer;
+    function GetItem(Idx: Integer): THistoryItem;
+    function LoadFromFile(const FilePath: string): Boolean;
+    function SaveToFile(const FilePath: string): Boolean;
+    function SyncFromTorrents(Torrents: TList; const FilePath: string; ForceSave: Boolean = False): Boolean;
+    procedure RemoveByHash(const HashStr: string);
+    property Dirty: Boolean read FDirty;
   end;
 
   { โครงสร้างเก็บข้อมูลสถิติของโปรแกรม (ตรงกับผลลัพธ์ของคำสั่ง RPC `session-stats`) }
@@ -235,6 +272,11 @@ function ExtractTrackerHost(const AnnounceUrl: string): string;
 function HasCliFlag(const Flag: string): Boolean;
 function GetWindowsAutoStart(out StartMinimized: Boolean): Boolean;
 function SetWindowsAutoStart(Enabled, StartMinimized: Boolean): Boolean;
+function GetDefaultPortableDataDir: string;
+function ExportPortableBackup(const DestFilePath, DataDir, IniPath: string;
+  History: TDownloadHistoryManager): Boolean;
+function ImportPortableBackup(const SrcFilePath, DataDir: string;
+  History: TDownloadHistoryManager; out RestoredFiles: Integer): Boolean;
 procedure SetPreventSystemSleep(Active: Boolean);
 procedure PlayCompletionSound;
 
@@ -631,6 +673,424 @@ begin
 {$IFDEF WINDOWS}
   MessageBeep(MB_ICONASTERISK);
 {$ENDIF}
+end;
+
+function GetDefaultPortableDataDir: string;
+begin
+  Result := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'data';
+end;
+
+function FileToRawStr(const FilePath: string): string;
+var
+  FS: TFileStream;
+begin
+  Result := '';
+  if not FileExists(FilePath) then Exit;
+  FS := TFileStream.Create(FilePath, fmOpenRead or fmShareDenyNone);
+  try
+    if FS.Size > 0 then
+    begin
+      SetLength(Result, FS.Size);
+      FS.ReadBuffer(Result[1], FS.Size);
+    end;
+  finally
+    FS.Free;
+  end;
+end;
+
+procedure RawStrToFile(const FilePath, Data: string);
+var
+  FS: TFileStream;
+begin
+  ForceDirectories(ExtractFileDir(FilePath));
+  FS := TFileStream.Create(FilePath, fmCreate);
+  try
+    if Length(Data) > 0 then
+      FS.WriteBuffer(Data[1], Length(Data));
+  finally
+    FS.Free;
+  end;
+end;
+
+{ TDownloadHistoryManager }
+
+constructor TDownloadHistoryManager.Create;
+begin
+  FItems := TList.Create;
+  FDirty := False;
+end;
+
+destructor TDownloadHistoryManager.Destroy;
+begin
+  Clear;
+  FItems.Free;
+  inherited Destroy;
+end;
+
+procedure TDownloadHistoryManager.Clear;
+var
+  I: Integer;
+begin
+  for I := 0 to FItems.Count - 1 do
+    TObject(FItems[I]).Free;
+  FItems.Clear;
+  FDirty := True;
+end;
+
+function TDownloadHistoryManager.Count: Integer;
+begin
+  Result := FItems.Count;
+end;
+
+function TDownloadHistoryManager.GetItem(Idx: Integer): THistoryItem;
+begin
+  if (Idx >= 0) and (Idx < FItems.Count) then
+    Result := THistoryItem(FItems[Idx])
+  else
+    Result := nil;
+end;
+
+function TDownloadHistoryManager.FindByHash(const HashStr: string): THistoryItem;
+var
+  I: Integer;
+  H: THistoryItem;
+begin
+  Result := nil;
+  if HashStr = '' then Exit;
+  for I := 0 to FItems.Count - 1 do
+  begin
+    H := THistoryItem(FItems[I]);
+    if SameText(H.HashString, HashStr) then
+      Exit(H);
+  end;
+end;
+
+function TDownloadHistoryManager.LoadFromFile(const FilePath: string): Boolean;
+var
+  Raw: string;
+  Data: TJSONData;
+  Arr: TJSONArray;
+  Obj: TJSONObject;
+  I: Integer;
+  H: THistoryItem;
+begin
+  Result := False;
+  Clear;
+  FDirty := False;
+  if not FileExists(FilePath) then Exit;
+  Raw := FileToRawStr(FilePath);
+  if Trim(Raw) = '' then Exit;
+  try
+    Data := GetJSON(Raw);
+    try
+      if Data is TJSONArray then
+      begin
+        Arr := TJSONArray(Data);
+        for I := 0 to Arr.Count - 1 do
+        begin
+          if not (Arr.Items[I] is TJSONObject) then Continue;
+          Obj := TJSONObject(Arr.Items[I]);
+          H := THistoryItem.Create;
+          H.HashString := Obj.Get('hash', '');
+          H.Name := Obj.Get('name', '');
+          H.TotalSize := Obj.Get('totalSize', Int64(0));
+          H.DownloadedEver := Obj.Get('downloadedEver', Int64(0));
+          H.UploadedEver := Obj.Get('uploadedEver', Int64(0));
+          H.UploadRatio := Obj.Get('uploadRatio', 0.0);
+          H.DownloadDir := Obj.Get('downloadDir', '');
+          H.MagnetLink := Obj.Get('magnetLink', '');
+          H.AddedDate := Obj.Get('addedDate', Int64(0));
+          H.DoneDate := Obj.Get('doneDate', Int64(0));
+          H.LastSeenDate := Obj.Get('lastSeenDate', Int64(0));
+          H.Completed := Obj.Get('completed', False);
+          if H.HashString <> '' then
+            FItems.Add(H)
+          else
+            H.Free;
+        end;
+        Result := True;
+      end;
+    finally
+      Data.Free;
+    end;
+  except
+    Result := False;
+  end;
+end;
+
+function TDownloadHistoryManager.SaveToFile(const FilePath: string): Boolean;
+var
+  Arr: TJSONArray;
+  Obj: TJSONObject;
+  I: Integer;
+  H: THistoryItem;
+begin
+  Result := False;
+  Arr := TJSONArray.Create;
+  try
+    for I := 0 to FItems.Count - 1 do
+    begin
+      H := THistoryItem(FItems[I]);
+      Obj := TJSONObject.Create;
+      Obj.Add('hash', H.HashString);
+      Obj.Add('name', H.Name);
+      Obj.Add('totalSize', H.TotalSize);
+      Obj.Add('downloadedEver', H.DownloadedEver);
+      Obj.Add('uploadedEver', H.UploadedEver);
+      Obj.Add('uploadRatio', H.UploadRatio);
+      Obj.Add('downloadDir', H.DownloadDir);
+      Obj.Add('magnetLink', H.MagnetLink);
+      Obj.Add('addedDate', H.AddedDate);
+      Obj.Add('doneDate', H.DoneDate);
+      Obj.Add('lastSeenDate', H.LastSeenDate);
+      Obj.Add('completed', H.Completed);
+      Arr.Add(Obj);
+    end;
+    RawStrToFile(FilePath, Arr.FormatJSON);
+    FDirty := False;
+    Result := True;
+  finally
+    Arr.Free;
+  end;
+end;
+
+function TDownloadHistoryManager.SyncFromTorrents(Torrents: TList; const FilePath: string;
+  ForceSave: Boolean): Boolean;
+var
+  I: Integer;
+  T: TTorrentItem;
+  H: THistoryItem;
+  IsDone, Changed: Boolean;
+  NowUnix: Int64;
+begin
+  Result := False;
+  if Torrents = nil then Exit;
+  Changed := False;
+  NowUnix := Trunc((Now - EncodeDate(1970, 1, 1)) * 86400);
+  for I := 0 to Torrents.Count - 1 do
+  begin
+    T := TTorrentItem(Torrents[I]);
+    if Trim(T.HashString) = '' then Continue;
+    IsDone := (T.PercentDone >= 0.9999) and (T.LeftUntilDone = 0) and (T.TotalSize > 0);
+    H := FindByHash(T.HashString);
+    if H = nil then
+    begin
+      H := THistoryItem.Create;
+      H.HashString := T.HashString;
+      H.Name := T.Name;
+      H.TotalSize := T.TotalSize;
+      H.DownloadedEver := T.DownloadedEver;
+      H.UploadedEver := T.UploadedEver;
+      H.UploadRatio := T.UploadRatio;
+      H.DownloadDir := T.DownloadDir;
+      H.MagnetLink := T.MagnetLink;
+      H.AddedDate := T.AddedDate;
+      H.DoneDate := T.DoneDate;
+      H.LastSeenDate := NowUnix;
+      H.Completed := IsDone;
+      FItems.Add(H);
+      Changed := True;
+    end
+    else
+    begin
+      if (T.Name <> '') and (H.Name <> T.Name) then begin H.Name := T.Name; Changed := True; end;
+      if (T.TotalSize > 0) and (H.TotalSize <> T.TotalSize) then begin H.TotalSize := T.TotalSize; Changed := True; end;
+      if (T.MagnetLink <> '') and (H.MagnetLink <> T.MagnetLink) then begin H.MagnetLink := T.MagnetLink; Changed := True; end;
+      if (T.DownloadDir <> '') and (H.DownloadDir <> T.DownloadDir) then begin H.DownloadDir := T.DownloadDir; Changed := True; end;
+      if (T.DoneDate > 0) and (H.DoneDate <> T.DoneDate) then begin H.DoneDate := T.DoneDate; Changed := True; end;
+      if IsDone and (not H.Completed) then
+      begin
+        H.Completed := True;
+        if H.DoneDate <= 0 then H.DoneDate := NowUnix;
+        Changed := True;
+      end;
+      if T.DownloadedEver > H.DownloadedEver then H.DownloadedEver := T.DownloadedEver;
+      if T.UploadedEver > H.UploadedEver then H.UploadedEver := T.UploadedEver;
+      H.UploadRatio := T.UploadRatio;
+      H.LastSeenDate := NowUnix;
+    end;
+  end;
+  if Changed then FDirty := True;
+  if (FDirty and (Changed or ForceSave)) and (FilePath <> '') then
+    Result := SaveToFile(FilePath);
+end;
+
+procedure TDownloadHistoryManager.RemoveByHash(const HashStr: string);
+var
+  I: Integer;
+  H: THistoryItem;
+begin
+  for I := FItems.Count - 1 downto 0 do
+  begin
+    H := THistoryItem(FItems[I]);
+    if SameText(H.HashString, HashStr) then
+    begin
+      H.Free;
+      FItems.Delete(I);
+      FDirty := True;
+    end;
+  end;
+end;
+
+procedure PackDirFiles(const FolderPath, Pattern: string; OutArr: TJSONArray);
+var
+  SR: TSearchRec;
+  DirSep, Raw: string;
+  Obj: TJSONObject;
+begin
+  if not DirectoryExists(FolderPath) then Exit;
+  DirSep := IncludeTrailingPathDelimiter(FolderPath);
+  if FindFirst(DirSep + Pattern, faAnyFile and not faDirectory, SR) = 0 then
+  begin
+    try
+      repeat
+        if (SR.Attr and faDirectory) <> 0 then Continue;
+        Raw := FileToRawStr(DirSep + SR.Name);
+        Obj := TJSONObject.Create;
+        Obj.Add('name', SR.Name);
+        Obj.Add('b64', EncodeStringBase64(Raw));
+        OutArr.Add(Obj);
+      until FindNext(SR) <> 0;
+    finally
+      SysUtils.FindClose(SR);
+    end;
+  end;
+end;
+
+function ExportPortableBackup(const DestFilePath, DataDir, IniPath: string;
+  History: TDownloadHistoryManager): Boolean;
+var
+  Root: TJSONObject;
+  TorArr, ResArr: TJSONArray;
+  HistRaw, DirSep: string;
+  HistData: TJSONData;
+begin
+  Result := False;
+  Root := TJSONObject.Create;
+  try
+    DirSep := IncludeTrailingPathDelimiter(DataDir);
+    if History <> nil then
+      History.SaveToFile(DirSep + 'download_history.json');
+
+    Root.Add('version', 1);
+    Root.Add('appIni', EncodeStringBase64(FileToRawStr(IniPath)));
+    Root.Add('settingsJson', EncodeStringBase64(FileToRawStr(DirSep + 'settings.json')));
+    Root.Add('statsJson', EncodeStringBase64(FileToRawStr(DirSep + 'stats.json')));
+
+    HistRaw := FileToRawStr(DirSep + 'download_history.json');
+    if Trim(HistRaw) <> '' then
+    begin
+      try
+        HistData := GetJSON(HistRaw);
+        Root.Add('history', HistData);
+      except
+        Root.Add('history', TJSONArray.Create);
+      end;
+    end
+    else
+      Root.Add('history', TJSONArray.Create);
+
+    TorArr := TJSONArray.Create;
+    PackDirFiles(DirSep + 'Torrents', '*', TorArr);
+    Root.Add('torrents', TorArr);
+
+    ResArr := TJSONArray.Create;
+    PackDirFiles(DirSep + 'Resume', '*', ResArr);
+    Root.Add('resume', ResArr);
+
+    RawStrToFile(DestFilePath, Root.FormatJSON);
+    Result := True;
+  finally
+    Root.Free;
+  end;
+end;
+
+function ImportPortableBackup(const SrcFilePath, DataDir: string;
+  History: TDownloadHistoryManager; out RestoredFiles: Integer): Boolean;
+var
+  Raw, DirSep, B64, FileName: string;
+  Data: TJSONData;
+  Root, Obj: TJSONObject;
+  Arr: TJSONArray;
+  I: Integer;
+begin
+  Result := False;
+  RestoredFiles := 0;
+  if not FileExists(SrcFilePath) then Exit;
+  Raw := FileToRawStr(SrcFilePath);
+  if Trim(Raw) = '' then Exit;
+  DirSep := IncludeTrailingPathDelimiter(DataDir);
+  ForceDirectories(DirSep);
+
+  Data := GetJSON(Raw);
+  try
+    if not (Data is TJSONObject) then Exit(False);
+    Root := TJSONObject(Data);
+
+    B64 := Root.Get('settingsJson', '');
+    if B64 <> '' then
+    begin
+      RawStrToFile(DirSep + 'settings.json', DecodeStringBase64(B64));
+      Inc(RestoredFiles);
+    end;
+    B64 := Root.Get('statsJson', '');
+    if B64 <> '' then
+    begin
+      RawStrToFile(DirSep + 'stats.json', DecodeStringBase64(B64));
+      Inc(RestoredFiles);
+    end;
+
+    Arr := Root.Find('torrents') as TJSONArray;
+    if Arr <> nil then
+    begin
+      for I := 0 to Arr.Count - 1 do
+      begin
+        if Arr.Items[I] is TJSONObject then
+        begin
+          Obj := TJSONObject(Arr.Items[I]);
+          FileName := ExtractFileName(Obj.Get('name', ''));
+          B64 := Obj.Get('b64', '');
+          if (FileName <> '') and (B64 <> '') then
+          begin
+            RawStrToFile(DirSep + 'Torrents' + PathDelim + FileName, DecodeStringBase64(B64));
+            Inc(RestoredFiles);
+          end;
+        end;
+      end;
+    end;
+
+    Arr := Root.Find('resume') as TJSONArray;
+    if Arr <> nil then
+    begin
+      for I := 0 to Arr.Count - 1 do
+      begin
+        if Arr.Items[I] is TJSONObject then
+        begin
+          Obj := TJSONObject(Arr.Items[I]);
+          FileName := ExtractFileName(Obj.Get('name', ''));
+          B64 := Obj.Get('b64', '');
+          if (FileName <> '') and (B64 <> '') then
+          begin
+            RawStrToFile(DirSep + 'Resume' + PathDelim + FileName, DecodeStringBase64(B64));
+            Inc(RestoredFiles);
+          end;
+        end;
+      end;
+    end;
+
+    Arr := Root.Find('history') as TJSONArray;
+    if Arr <> nil then
+    begin
+      RawStrToFile(DirSep + 'download_history.json', Arr.FormatJSON);
+      if History <> nil then
+        History.LoadFromFile(DirSep + 'download_history.json');
+      Inc(RestoredFiles);
+    end;
+
+    Result := True;
+  finally
+    Data.Free;
+  end;
 end;
 
 end.

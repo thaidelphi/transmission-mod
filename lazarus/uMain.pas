@@ -72,6 +72,7 @@ type
     FDesktopPrefs: TDesktopPrefs;
     FForceQuit: Boolean;
     FScanningWatchDir: Boolean;
+    FHistory: TDownloadHistoryManager;
 
     // Top Menu
     FMainMenu: TMainMenu;
@@ -123,6 +124,8 @@ type
     FTimerRefresh: TTimer;
 
     function GetConfigIniPath: string;
+    function GetEffectiveDataDir: string;
+    function GetHistoryFilePath: string;
     procedure LoadAppSettings;
     procedure SaveAppSettings;
 
@@ -219,6 +222,7 @@ type
     procedure ActToggleSelectedTrackerPackets(Sender: TObject);
     procedure ActToggleSelectedTrackerAutoPause(Sender: TObject);
     procedure ActOpenWebUi(Sender: TObject);
+    procedure ActDownloadHistory(Sender: TObject);
     procedure ActShowStatistics(Sender: TObject);
     procedure ActShowAbout(Sender: TObject);
     procedure ActStatsModeClick(Sender: TObject);
@@ -300,6 +304,18 @@ begin
   Result := ChangeFileExt(ParamStr(0), '.ini');
 end;
 
+function TMainForm.GetEffectiveDataDir: string;
+begin
+  Result := Trim(FDesktopPrefs.DataDir);
+  if Result = '' then
+    Result := GetDefaultPortableDataDir;
+end;
+
+function TMainForm.GetHistoryFilePath: string;
+begin
+  Result := IncludeTrailingPathDelimiter(GetEffectiveDataDir) + 'download_history.json';
+end;
+
 { โหลดค่าตั้งค่าหน้าต่าง โหมดการแสดงผล และการตั้งค่า Session/WebUI จากไฟล์ .ini }
 procedure TMainForm.LoadAppSettings;
 var
@@ -308,6 +324,9 @@ var
   PortNum: Integer;
   LocalSess: Boolean;
 begin
+  if FDesktopPrefs.DataDir = '' then
+    FDesktopPrefs.DataDir := GetDefaultPortableDataDir;
+  FRpc.DataDir := GetEffectiveDataDir;
   if not FileExists(GetConfigIniPath) then Exit;
   Ini := TIniFile.Create(GetConfigIniPath);
   try
@@ -346,6 +365,10 @@ begin
     UserStr := Ini.ReadString('Session', 'Username', '');
     PassStr := Ini.ReadString('Session', 'Password', '');
     PathStr := Ini.ReadString('Session', 'UrlPath', '/transmission/rpc');
+    FDesktopPrefs.DataDir := Trim(Ini.ReadString('Session', 'DataDir', ''));
+    if FDesktopPrefs.DataDir = '' then
+      FDesktopPrefs.DataDir := GetDefaultPortableDataDir;
+    FRpc.DataDir := GetEffectiveDataDir;
     FRpc.Configure(HostStr, PortNum, UserStr, PassStr, LocalSess, PathStr);
 
     if FWebServer <> nil then
@@ -396,6 +419,7 @@ begin
       Ini.WriteInteger('Session', 'Port', FRpc.Port);
       Ini.WriteString('Session', 'Username', FRpc.Username);
       Ini.WriteString('Session', 'UrlPath', FRpc.UrlPath);
+      Ini.WriteString('Session', 'DataDir', GetEffectiveDataDir);
 
       if FWebServer <> nil then
       begin
@@ -440,6 +464,7 @@ begin
   FDesktopPrefs.WatchDirEnabled := False;
   FDesktopPrefs.WatchDir := '';
   FDesktopPrefs.WatchDirDeleteOriginal := False;
+  FDesktopPrefs.DataDir := GetDefaultPortableDataDir;
   FForceQuit := False;
   FScanningWatchDir := False;
   OnCloseQuery := @FormCloseQuery;
@@ -452,6 +477,7 @@ begin
 
   FRpc := TTransmissionRpcClient.Create;
   FWebServer := TTransmissionWebServer.Create(FRpc);
+  FHistory := TDownloadHistoryManager.Create;
 
   BuildMenus;
   BuildToolbar;
@@ -463,6 +489,8 @@ begin
   FixTopBarOrder;
 
   LoadAppSettings;
+  FRpc.DataDir := GetEffectiveDataDir;
+  FHistory.LoadFromFile(GetHistoryFilePath);
 
   // Start or connect to local transmission-daemon automatically
   FRpc.EnsureLocalDaemonRunning;
@@ -485,6 +513,12 @@ begin
     FTimerRefresh.Enabled := False;
   if FTrayIcon <> nil then
     FTrayIcon.Visible := False;
+  if FHistory <> nil then
+  begin
+    FHistory.SyncFromTorrents(FAllTorrents, GetHistoryFilePath, True);
+    FHistory.Free;
+    FHistory := nil;
+  end;
   SaveAppSettings;
   ClearAllTorrents;
   FKnownFinishedIds.Free;
@@ -606,6 +640,7 @@ begin
   MiCompactView := AddItem(MnuView, '&Compact View', ShortCut(Ord('C'), [ssAlt]), @ActToggleCompactView);
   MiCompactView.Checked := FCompactView;
   AddItem(MnuView, 'Open &Web Interface', ShortCut(Ord('W'), [ssCtrl]), @ActOpenWebUi);
+  AddItem(MnuView, 'Download &History...', ShortCut(Ord('H'), [ssCtrl]), @ActDownloadHistory);
   AddSep(MnuView);
   MiToolbar := AddItem(MnuView, '&Toolbar', 0, @ActToggleToolbar);
   MiToolbar.Checked := True;
@@ -664,6 +699,7 @@ begin
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Open Web Interface (Browser)...'; PItem.OnClick := @ActOpenWebUi; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Change Session...'; PItem.OnClick := @ActChangeSession; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Preferences...'; PItem.OnClick := @ActPreferences; FOptionsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Download History...'; PItem.OnClick := @ActDownloadHistory; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Statistics...'; PItem.OnClick := @ActShowStatistics; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Block All Tracker Packets'; PItem.OnClick := @ActToggleGlobalTrackerPause; FOptionsPopup.Items.Add(PItem);
@@ -2113,6 +2149,8 @@ begin
         end;
       end;
       CheckCompletedNotifications;
+      if FHistory <> nil then
+        FHistory.SyncFromTorrents(FAllTorrents, GetHistoryFilePath);
       UpdateSleepPrevention;
       UpdateStateFilterCounts;
       RebuildTrackerFilterList;
@@ -2536,6 +2574,8 @@ end;
 
 procedure TMainForm.PrefsApplied(Sender: TObject);
 begin
+  if FRpc <> nil then
+    FRpc.DataDir := GetEffectiveDataDir;
   RenderStatusBarIcons;
   UpdateStatusBarText;
   UpdateSleepPrevention;
@@ -2545,7 +2585,9 @@ end;
 procedure TMainForm.ActPreferences(Sender: TObject);
 var
   Ok: Boolean;
+  OldDataDir, NewDataDir: string;
 begin
+  OldDataDir := GetEffectiveDataDir;
   BeginModalPause;
   try
     Ok := ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig, FDesktopPrefs, @PrefsApplied);
@@ -2554,6 +2596,11 @@ begin
   end;
   if Ok then
   begin
+    NewDataDir := GetEffectiveDataDir;
+    if FRpc <> nil then
+      FRpc.DataDir := NewDataDir;
+    if (FHistory <> nil) and (CompareText(OldDataDir, NewDataDir) <> 0) then
+      FHistory.LoadFromFile(GetHistoryFilePath);
     RenderStatusBarIcons;
     RefreshFromRpc;
     SaveAppSettings;
@@ -2682,6 +2729,30 @@ begin
   end
   else
     OpenURL('http://127.0.0.1:9091/');
+end;
+
+procedure TMainForm.ActDownloadHistory(Sender: TObject);
+var
+  Restored: Boolean;
+begin
+  if FHistory <> nil then
+    FHistory.SyncFromTorrents(FAllTorrents, GetHistoryFilePath);
+  BeginModalPause;
+  try
+    Restored := ShowHistoryDialog(Self, FRpc, FHistory, GetEffectiveDataDir, GetConfigIniPath);
+  finally
+    EndModalPause;
+  end;
+  if Restored then
+  begin
+    if FRpc <> nil then
+    begin
+      FRpc.RestartLocalDaemon;
+      FRpc.FetchSession(FSessionConfig);
+    end;
+    RenderStatusBarIcons;
+  end;
+  RefreshFromRpc;
 end;
 
 procedure TMainForm.ActShowStatistics(Sender: TObject);

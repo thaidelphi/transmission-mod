@@ -39,5 +39,7 @@ CMakeUserPresets.json
 # Lazarus build outputs
 /lazarus/lib/
 /lazarus/backup/
+/lazarus/data/
+/lazarus/*.ini
 /lazarus/*.exe
 /lazarus/*.res

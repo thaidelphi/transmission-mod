@@ -33,6 +33,7 @@ type
     FPassword: string;           // รหัสผ่านกรณีเปิด HTTP Basic Authentication
     FSessionId: string;          // โทเค็น X-Transmission-Session-Id ปัจจุบัน
     FIsLocalSession: Boolean;    // True = รันและจัดการ transmission-daemon.exe ในเครื่องอัตโนมัติ
+    FDataDir: string;            // โฟลเดอร์เก็บ config / torrents / resume ถาวร (-g)
     FDaemonProcess: TProcess;    // ออบเจกต์โปรเซสของ transmission-daemon.exe ที่เราเปิดขึ้นเอง
     FLastError: string;          // ข้อความข้อผิดพลาดล่าสุด
     FConnected: Boolean;         // สถานะว่าเชื่อมต่อกับ RPC Server สำเร็จหรือไม่
@@ -54,6 +55,7 @@ type
 
     { ปิดโปรเซส Local Daemon ที่โปรแกรมนี้เป็นคนเปิดขึ้นเมื่อปิดโปรแกรม }
     procedure StopLocalDaemonIfOwned;
+    function RestartLocalDaemon: Boolean;
 
     { คำสั่งระดับเซสชัน (session-get, session-set, session-stats) }
     function FetchSession(out Config: TSessionConfig): Boolean;
@@ -97,6 +99,7 @@ type
     property Username: string read FUsername write FUsername;
     property Password: string read FPassword write FPassword;
     property IsLocalSession: Boolean read FIsLocalSession write FIsLocalSession;
+    property DataDir: string read FDataDir write FDataDir;
     property Connected: Boolean read FConnected;
     property LastError: string read FLastError;
   end;
@@ -178,6 +181,7 @@ begin
   FPassword := '';
   FSessionId := '';
   FIsLocalSession := True;
+  FDataDir := GetDefaultPortableDataDir;
   FDaemonProcess := nil;
   FConnected := False;
 end;
@@ -231,9 +235,82 @@ begin
 end;
 
 { ตรวจสอบและสั่งรัน transmission-daemon.exe ในโหมดเบื้องหลัง (poNoConsole) หากรันในโหมด Local Session }
+procedure CopyFileExact(const Src, Dst: string);
+var
+  S, D: TFileStream;
+begin
+  if not FileExists(Src) then Exit;
+  ForceDirectories(ExtractFileDir(Dst));
+  S := TFileStream.Create(Src, fmOpenRead or fmShareDenyNone);
+  try
+    D := TFileStream.Create(Dst, fmCreate);
+    try
+      if S.Size > 0 then
+        D.CopyFrom(S, S.Size);
+    finally
+      D.Free;
+    end;
+  finally
+    S.Free;
+  end;
+end;
+
+procedure CopyDirContents(const SrcDir, DstDir: string);
+var
+  SR: TSearchRec;
+  S, D: string;
+begin
+  if not DirectoryExists(SrcDir) then Exit;
+  S := IncludeTrailingPathDelimiter(SrcDir);
+  D := IncludeTrailingPathDelimiter(DstDir);
+  ForceDirectories(D);
+  if FindFirst(S + '*', faAnyFile, SR) = 0 then
+  begin
+    try
+      repeat
+        if (SR.Name = '.') or (SR.Name = '..') then Continue;
+        if (SR.Attr and faDirectory) <> 0 then
+          CopyDirContents(S + SR.Name, D + SR.Name)
+        else
+          CopyFileExact(S + SR.Name, D + SR.Name);
+      until FindNext(SR) <> 0;
+    finally
+      FindClose(SR);
+    end;
+  end;
+end;
+
+procedure MigrateLegacyDaemonData(const TargetDir: string);
+var
+  LegacyDir, TgtSep, LegSep: string;
+begin
+  TgtSep := IncludeTrailingPathDelimiter(TargetDir);
+  if FileExists(TgtSep + 'settings.json') or DirectoryExists(TgtSep + 'Resume') then
+    Exit;
+
+  LegacyDir := Trim(GetEnvironmentVariable('LOCALAPPDATA'));
+  if LegacyDir = '' then Exit;
+  LegacyDir := IncludeTrailingPathDelimiter(LegacyDir) + 'transmission-daemon';
+  if not DirectoryExists(LegacyDir) then Exit;
+
+  LegSep := IncludeTrailingPathDelimiter(LegacyDir);
+  if SameText(ExcludeTrailingPathDelimiter(TargetDir), ExcludeTrailingPathDelimiter(LegacyDir)) then Exit;
+
+  if FileExists(LegSep + 'settings.json') then
+    CopyFileExact(LegSep + 'settings.json', TgtSep + 'settings.json');
+  if FileExists(LegSep + 'stats.json') then
+    CopyFileExact(LegSep + 'stats.json', TgtSep + 'stats.json');
+  if DirectoryExists(LegSep + 'Torrents') then
+    CopyDirContents(LegSep + 'Torrents', TgtSep + 'Torrents');
+  if DirectoryExists(LegSep + 'Resume') then
+    CopyDirContents(LegSep + 'Resume', TgtSep + 'Resume');
+  if DirectoryExists(LegSep + 'blocklists') then
+    CopyDirContents(LegSep + 'blocklists', TgtSep + 'blocklists');
+end;
+
 function TTransmissionRpcClient.EnsureLocalDaemonRunning: Boolean;
 var
-  DaemonExe: string;
+  DaemonExe, EffectiveDir: string;
   Cfg: TSessionConfig;
   Retries: Integer;
 begin
@@ -254,11 +331,19 @@ begin
     Exit(False);
   end;
 
+  EffectiveDir := Trim(FDataDir);
+  if EffectiveDir = '' then
+    EffectiveDir := GetDefaultPortableDataDir;
+  ForceDirectories(EffectiveDir);
+  MigrateLegacyDaemonData(EffectiveDir);
+
   FreeAndNil(FDaemonProcess);
   FDaemonProcess := TProcess.Create(nil);
   FDaemonProcess.Executable := DaemonExe;
   FDaemonProcess.CurrentDirectory := ExtractFilePath(DaemonExe);
   FDaemonProcess.Parameters.Add('-f'); // รันในโหมด Foreground ของโปรเซสย่อยแต่ซ่อนหน้าต่างด้วย poNoConsole
+  FDaemonProcess.Parameters.Add('-g');
+  FDaemonProcess.Parameters.Add(EffectiveDir);
   FDaemonProcess.Parameters.Add('-p');
   FDaemonProcess.Parameters.Add(IntToStr(FPort));
   FDaemonProcess.Parameters.Add('-a');
@@ -297,6 +382,13 @@ begin
     end;
     FreeAndNil(FDaemonProcess);
   end;
+end;
+
+function TTransmissionRpcClient.RestartLocalDaemon: Boolean;
+begin
+  StopLocalDaemonIfOwned;
+  Sleep(250);
+  Result := EnsureLocalDaemonRunning;
 end;
 
 { ดึงค่าจาก HTTP Response Header ตามชื่อคีย์ (ไม่สนใจตัวพิมพ์เล็ก/ใหญ่) }
