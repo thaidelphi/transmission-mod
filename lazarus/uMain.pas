@@ -163,6 +163,10 @@ type
     procedure UpdateSleepPrevention;
     procedure PrefsApplied(Sender: TObject);
     procedure ProcessWatchFolder;
+    procedure BringMainWindowToFront;
+    procedure ProcessExternalOpenArg(const Arg: string);
+    procedure HandleSingleInstancePayload(const Payload: string);
+    procedure HandleInitialCliArgs;
 
     // Event Handlers
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -232,6 +236,8 @@ type
     procedure ActToggleMinimizeToTray(Sender: TObject);
     procedure ActToggleAutoStart(Sender: TObject);
     procedure ActQuit(Sender: TObject);
+  protected
+    procedure CreateWnd; override;
   public
   end;
 
@@ -487,6 +493,8 @@ begin
   BuildTorrentList;
   BuildTrayIcon;
   FixTopBarOrder;
+  HandleNeeded;
+  RegisterMainWindowForSingleInstance(PtrUInt(Handle), @HandleSingleInstancePayload);
 
   LoadAppSettings;
   FRpc.DataDir := GetEffectiveDataDir;
@@ -499,6 +507,7 @@ begin
   RenderStatusBarIcons;
   RefreshFromRpc;
   UpdateActionStates;
+  HandleInitialCliArgs;
 
   FTimerRefresh := TTimer.Create(Self);
   FTimerRefresh.Interval := 1500;
@@ -508,6 +517,8 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  UnregisterSingleInstanceWindow;
+  ReleaseSingleInstanceLock;
   SetPreventSystemSleep(False);
   if FTimerRefresh <> nil then
     FTimerRefresh.Enabled := False;
@@ -2850,14 +2861,103 @@ begin
   if Visible then
     Hide
   else
-  begin
+    BringMainWindowToFront;
+end;
+
+procedure TMainForm.BringMainWindowToFront;
+begin
+  Application.ShowMainForm := True;
+  if not Visible then
     Show;
-    if WindowState = wsMinimized then
-      WindowState := wsNormal;
-    BringToFront;
-    if CanFocus then
-      SetFocus;
+  if WindowState = wsMinimized then
+    WindowState := wsNormal;
+  Application.Restore;
+  ForceForegroundHwnd(PtrUInt(Handle));
+  BringToFront;
+  if CanFocus then
+    SetFocus;
+end;
+
+procedure TMainForm.ProcessExternalOpenArg(const Arg: string);
+var
+  S, LowerS, SelFile, DestDir, AddedName: string;
+  StartNow, TrashFile: Boolean;
+  Pri: Integer;
+  Unwanted: TIntegerDynArray;
+begin
+  S := Trim(Arg);
+  if S = '' then Exit;
+  LowerS := LowerCase(S);
+
+  if (Pos('magnet:', LowerS) = 1) or
+     (Pos('http://', LowerS) = 1) or
+     (Pos('https://', LowerS) = 1) then
+  begin
+    if FRpc.AddTorrentUrl(S, FSessionConfig.DownloadDir, FSessionConfig.StartAddedTorrents, TR_PRI_NORMAL, AddedName) then
+      RefreshFromRpc
+    else
+      MessageDlg('Failed to add URL/Magnet: ' + FRpc.LastError, mtError, [mbOK], 0);
+    Exit;
   end;
+
+  if FileExists(S) and SameText(ExtractFileExt(S), '.torrent') then
+  begin
+    BeginModalPause;
+    try
+      if ShowOpenTorrentDialog(Self, FRpc, S, FSessionConfig.DownloadDir,
+           FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
+      begin
+        if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
+        begin
+          if TrashFile then
+            DeleteFile(SelFile);
+        end
+        else
+          MessageDlg('Failed to add torrent: ' + FRpc.LastError, mtError, [mbOK], 0);
+      end;
+    finally
+      EndModalPause;
+    end;
+    RefreshFromRpc;
+  end;
+end;
+
+procedure TMainForm.HandleSingleInstancePayload(const Payload: string);
+var
+  Lines: TStringList;
+  I: Integer;
+  ShouldActivate: Boolean;
+begin
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Payload;
+    ShouldActivate := (Lines.Count = 0) or (Trim(Lines[0]) <> '0');
+    if ShouldActivate then
+      BringMainWindowToFront;
+    for I := 1 to Lines.Count - 1 do
+      ProcessExternalOpenArg(Lines[I]);
+  finally
+    Lines.Free;
+  end;
+end;
+
+procedure TMainForm.HandleInitialCliArgs;
+var
+  I: Integer;
+  OneArg: string;
+begin
+  for I := 1 to ParamCount do
+  begin
+    OneArg := Trim(ParamStr(I));
+    if (OneArg = '') or SameText(OneArg, '--minimized') then Continue;
+    ProcessExternalOpenArg(OneArg);
+  end;
+end;
+
+procedure TMainForm.CreateWnd;
+begin
+  inherited CreateWnd;
+  RegisterMainWindowForSingleInstance(PtrUInt(Handle), @HandleSingleInstancePayload);
 end;
 
 procedure TMainForm.ActToggleMinimizeToTray(Sender: TObject);

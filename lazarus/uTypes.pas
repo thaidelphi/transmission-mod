@@ -34,6 +34,9 @@ const
   TR_RATIOLIMIT_SINGLE    = 1; // กำหนดค่า Ratio เฉพาะทอร์เรนต์นี้ (Stop seeding at torrent ratio)
   TR_RATIOLIMIT_UNLIMITED = 2; // ปล่อยไฟล์ไปเรื่อย ๆ โดยไม่สนใจ Ratio (Seed regardless of ratio)
 
+  { รหัสยืนยันข้อความ WM_COPYDATA สำหรับการส่งต่ออาร์กิวเมนต์ระหว่างอินสแตนซ์ }
+  SINGLE_INSTANCE_COPYDATA_ID = $54524C5A; // 'TRLZ'
+
 type
   { โครงสร้างเก็บข้อมูลไฟล์ย่อยแต่ละไฟล์ภายในทอร์เรนต์ }
   TTorrentFileItem = record
@@ -279,6 +282,15 @@ function ImportPortableBackup(const SrcFilePath, DataDir: string;
   History: TDownloadHistoryManager; out RestoredFiles: Integer): Boolean;
 procedure SetPreventSystemSleep(Active: Boolean);
 procedure PlayCompletionSound;
+type
+  TSingleInstancePayloadEvent = procedure(const Payload: string) of object;
+
+function AcquireSingleInstanceLock: Boolean;
+procedure ReleaseSingleInstanceLock;
+procedure RegisterMainWindowForSingleInstance(MainHwnd: PtrUInt; OnPayload: TSingleInstancePayloadEvent = nil);
+procedure UnregisterSingleInstanceWindow;
+procedure NotifyExistingInstance;
+procedure ForceForegroundHwnd(HwndVal: PtrUInt);
 
 implementation
 
@@ -1092,5 +1104,235 @@ begin
     Data.Free;
   end;
 end;
+
+var
+  GSingleInstanceMutex: THandle = 0;
+  GSingleInstanceMap: THandle = 0;
+  {$IFDEF WINDOWS}
+  GSubclassedHwnd: HWND = 0;
+  GPrevWndProc: PtrUInt = 0;
+  GOnSingleInstancePayload: TSingleInstancePayloadEvent = nil;
+  {$ENDIF}
+
+function AcquireSingleInstanceLock: Boolean;
+{$IFDEF WINDOWS}
+var
+  Err: DWORD;
+begin
+  if GSingleInstanceMutex <> 0 then
+    Exit(True);
+  GSingleInstanceMutex := CreateMutexW(nil, True,
+    PWideChar(UnicodeString('Local\TransmissionLazSingleInstance_V1')));
+  if GSingleInstanceMutex = 0 then
+    Exit(True); // ไม่บล็อกการเปิดหากระบบสร้าง Mutex ไม่สำเร็จ
+  Err := GetLastError;
+  if Err = ERROR_ALREADY_EXISTS then
+  begin
+    CloseHandle(GSingleInstanceMutex);
+    GSingleInstanceMutex := 0;
+    Exit(False);
+  end;
+  Result := True;
+end;
+{$ELSE}
+begin
+  Result := True;
+end;
+{$ENDIF}
+
+procedure ReleaseSingleInstanceLock;
+begin
+{$IFDEF WINDOWS}
+  if GSingleInstanceMutex <> 0 then
+  begin
+    ReleaseMutex(GSingleInstanceMutex);
+    CloseHandle(GSingleInstanceMutex);
+    GSingleInstanceMutex := 0;
+  end;
+{$ENDIF}
+end;
+
+procedure UnregisterSingleInstanceWindow;
+begin
+{$IFDEF WINDOWS}
+  if (GSubclassedHwnd <> 0) and IsWindow(GSubclassedHwnd) and (GPrevWndProc <> 0) then
+  begin
+    SetWindowLongPtrW(GSubclassedHwnd, GWLP_WNDPROC, LONG_PTR(GPrevWndProc));
+    GSubclassedHwnd := 0;
+    GPrevWndProc := 0;
+  end;
+  GOnSingleInstancePayload := nil;
+  if GSingleInstanceMap <> 0 then
+  begin
+    CloseHandle(GSingleInstanceMap);
+    GSingleInstanceMap := 0;
+  end;
+{$ENDIF}
+end;
+
+{$IFDEF WINDOWS}
+function SingleInstanceSubclassProc(ahwnd: HWND; uMsg: UINT; wParam: WPARAM; lParam: LPARAM): LRESULT; stdcall;
+var
+  CDS: PCopyDataStruct;
+  Payload: string;
+begin
+  if uMsg = WM_COPYDATA then
+  begin
+    CDS := {%H-}PCopyDataStruct(lParam);
+    if (CDS <> nil) and (CDS^.dwData = SINGLE_INSTANCE_COPYDATA_ID) then
+    begin
+      Payload := '';
+      if (CDS^.cbData > 0) and (CDS^.lpData <> nil) then
+      begin
+        SetLength(Payload, CDS^.cbData);
+        Move(CDS^.lpData^, Payload[1], CDS^.cbData);
+      end;
+      if Assigned(GOnSingleInstancePayload) then
+        GOnSingleInstancePayload(Payload);
+      Exit(1);
+    end;
+  end;
+  if GPrevWndProc <> 0 then
+    Result := CallWindowProcW(WNDPROC(GPrevWndProc), ahwnd, uMsg, wParam, lParam)
+  else
+    Result := DefWindowProcW(ahwnd, uMsg, wParam, lParam);
+end;
+{$ENDIF}
+
+procedure RegisterMainWindowForSingleInstance(MainHwnd: PtrUInt; OnPayload: TSingleInstancePayloadEvent = nil);
+{$IFDEF WINDOWS}
+var
+  P: PPtrUInt;
+begin
+  UnregisterSingleInstanceWindow;
+  GOnSingleInstancePayload := OnPayload;
+  if (MainHwnd <> 0) and IsWindow(HWND(MainHwnd)) then
+  begin
+    GPrevWndProc := PtrUInt(GetWindowLongPtrW(HWND(MainHwnd), GWLP_WNDPROC));
+    if (GPrevWndProc <> 0) and (GPrevWndProc <> PtrUInt(@SingleInstanceSubclassProc)) then
+    begin
+      SetWindowLongPtrW(HWND(MainHwnd), GWLP_WNDPROC, LONG_PTR(PtrUInt(@SingleInstanceSubclassProc)));
+      GSubclassedHwnd := HWND(MainHwnd);
+    end;
+  end;
+  GSingleInstanceMap := CreateFileMappingW(INVALID_HANDLE_VALUE, nil, PAGE_READWRITE,
+    0, SizeOf(PtrUInt), PWideChar(UnicodeString('Local\TransmissionLazMainHwnd_V1')));
+  if GSingleInstanceMap <> 0 then
+  begin
+    P := MapViewOfFile(GSingleInstanceMap, FILE_MAP_WRITE, 0, 0, SizeOf(PtrUInt));
+    if P <> nil then
+    begin
+      P^ := MainHwnd;
+      UnmapViewOfFile(P);
+    end;
+  end;
+end;
+{$ELSE}
+begin
+end;
+{$ENDIF}
+
+{$IFDEF WINDOWS}
+function AllowSetForegroundWindow(dwProcessId: DWORD): BOOL; stdcall; external 'user32.dll' name 'AllowSetForegroundWindow';
+{$ENDIF}
+
+procedure NotifyExistingInstance;
+{$IFDEF WINDOWS}
+var
+  Retry, I: Integer;
+  HMap: THandle;
+  P: PPtrUInt;
+  TargetHwnd: HWND;
+  TargetPid: DWORD;
+  ArgList, PayloadStr, OneArg: string;
+  ShouldActivate: Boolean;
+  CDS: COPYDATASTRUCT;
+begin
+  TargetHwnd := 0;
+  for Retry := 1 to 20 do
+  begin
+    HMap := OpenFileMappingW(FILE_MAP_READ, False,
+      PWideChar(UnicodeString('Local\TransmissionLazMainHwnd_V1')));
+    if HMap <> 0 then
+    begin
+      try
+        P := MapViewOfFile(HMap, FILE_MAP_READ, 0, 0, SizeOf(PtrUInt));
+        if P <> nil then
+        begin
+          TargetHwnd := HWND(P^);
+          UnmapViewOfFile(P);
+        end;
+      finally
+        CloseHandle(HMap);
+      end;
+      if (TargetHwnd <> 0) and IsWindow(TargetHwnd) then Break;
+      TargetHwnd := 0;
+    end;
+    Sleep(50);
+  end;
+
+  if (TargetHwnd = 0) or (not IsWindow(TargetHwnd)) then
+    TargetHwnd := FindWindowW(nil, PWideChar(UnicodeString('Transmission')));
+  if (TargetHwnd = 0) or (not IsWindow(TargetHwnd)) then Exit;
+
+  ArgList := '';
+  for I := 1 to ParamCount do
+  begin
+    OneArg := Trim(ParamStr(I));
+    if (OneArg = '') or SameText(OneArg, '--minimized') then Continue;
+    if ArgList <> '' then ArgList := ArgList + #10;
+    ArgList := ArgList + OneArg;
+  end;
+
+  ShouldActivate := (not HasCliFlag('--minimized')) or (ArgList <> '');
+  if ShouldActivate then
+    PayloadStr := '1'
+  else
+    PayloadStr := '0';
+  if ArgList <> '' then
+    PayloadStr := PayloadStr + #10 + ArgList;
+
+  TargetPid := 0;
+  GetWindowThreadProcessId(TargetHwnd, @TargetPid);
+  if (TargetPid <> 0) and ShouldActivate then
+    AllowSetForegroundWindow(TargetPid);
+
+  CDS.dwData := SINGLE_INSTANCE_COPYDATA_ID;
+  CDS.cbData := Length(PayloadStr);
+  if CDS.cbData > 0 then
+    CDS.lpData := PAnsiChar(PayloadStr)
+  else
+    CDS.lpData := nil;
+
+  SendMessageW(TargetHwnd, WM_COPYDATA, 0, LPARAM(@CDS));
+  if ShouldActivate then
+    SetForegroundWindow(TargetHwnd);
+end;
+{$ELSE}
+begin
+end;
+{$ENDIF}
+
+procedure ForceForegroundHwnd(HwndVal: PtrUInt);
+{$IFDEF WINDOWS}
+var
+  H: HWND;
+begin
+  H := HWND(HwndVal);
+  if H = 0 then Exit;
+  if IsIconic(H) then
+    ShowWindow(H, SW_RESTORE)
+  else
+    ShowWindow(H, SW_SHOW);
+  SetForegroundWindow(H);
+end;
+{$ELSE}
+begin
+end;
+{$ENDIF}
+
+finalization
+  UnregisterSingleInstanceWindow;
+  ReleaseSingleInstanceLock;
 
 end.

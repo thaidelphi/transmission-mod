@@ -23,6 +23,13 @@ uses
 {$R *.res}
 
 begin
+  // ป้องกันการเปิดโปรแกรมซ้ำซ้อนมากกว่า 1 ตัว (Single Instance)
+  if not AcquireSingleInstanceLock then
+  begin
+    NotifyExistingInstance;
+    Exit;
+  end;
+
   // บังคับใช้ทรัพยากรฟอร์ม (.lfm) ของยูนิตที่เกี่ยวข้อง
   RequireDerivedFormResource := True;
 
