@@ -444,14 +444,16 @@ end;
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
   Caption := 'Transmission';
-  Width := 1020;
-  Height := 640;
-  Constraints.MinWidth := 520;
-  Constraints.MinHeight := 340;
+  Width := 1120;
+  Height := 680;
+  Constraints.MinWidth := 600;
+  Constraints.MinHeight := 380;
   Position := poScreenCenter;
   AllowDropFiles := True;
   OnDropFiles := @FormDropFiles;
-  Color := clWindow;
+  Color := clWhite;
+  Font.Name := 'Segoe UI';
+  Font.Size := 9;
   DoubleBuffered := True;
 
   FAllTorrents := TList.Create;
@@ -753,101 +755,126 @@ procedure TMainForm.BuildToolbar;
     Result := TSpeedButton.Create(FPnlToolbar);
     Result.Parent := FPnlToolbar;
     Result.Left := ALeft;
-    Result.Top := 4;
-    Result.Width := 34;
-    Result.Height := 32;
+    Result.Top := 7;
+    Result.Width := 42;
+    Result.Height := 34;
     Result.Flat := True;
     Result.Hint := AHint;
     Result.ShowHint := True;
     Result.OnClick := AOnClick;
   end;
 var
-  Sep: TBevel;
+  Sep, BotLine: TPanel;
 begin
   FPnlToolbar := TPanel.Create(Self);
   FPnlToolbar.Parent := Self;
   FPnlToolbar.Align := alTop;
-  FPnlToolbar.Height := 40;
+  FPnlToolbar.Height := 48;
   FPnlToolbar.BevelOuter := bvNone;
-  FPnlToolbar.Color := RGBToColor(246, 246, 246);
+  FPnlToolbar.Color := clWhite;
   FPnlToolbar.DoubleBuffered := True;
 
-  FBtnOpenFile := CreateToolBtn(6, 'Open a torrent (Ctrl+O)', @ActOpenFile);
-  FBtnOpenUrl := CreateToolBtn(42, 'Open URL or Magnet link (Ctrl+U)', @ActOpenUrl);
-  FBtnStart := CreateToolBtn(78, 'Start selected torrents (Ctrl+S)', @ActStartSelected);
-  FBtnPause := CreateToolBtn(114, 'Pause selected torrents (Ctrl+P)', @ActPauseSelected);
-  FBtnRemove := CreateToolBtn(150, 'Remove selected torrents (Del)', @ActRemoveSelected);
+  BotLine := TPanel.Create(FPnlToolbar);
+  BotLine.Parent := FPnlToolbar;
+  BotLine.Align := alBottom;
+  BotLine.Height := 1;
+  BotLine.BevelOuter := bvNone;
+  BotLine.Color := RGBToColor(226, 232, 240);
 
-  Sep := TBevel.Create(FPnlToolbar);
+  FBtnOpenFile := CreateToolBtn(10, 'Open a torrent (Ctrl+O)', @ActOpenFile);
+  FBtnOpenUrl := CreateToolBtn(56, 'Open URL or Magnet link (Ctrl+U)', @ActOpenUrl);
+
+  Sep := TPanel.Create(FPnlToolbar);
   Sep.Parent := FPnlToolbar;
-  Sep.Shape := bsLeftLine;
-  Sep.Left := 190;
-  Sep.Top := 7;
-  Sep.Width := 2;
-  Sep.Height := 26;
+  Sep.BevelOuter := bvNone;
+  Sep.Color := RGBToColor(226, 232, 240);
+  Sep.Left := 104;
+  Sep.Top := 12;
+  Sep.Width := 1;
+  Sep.Height := 24;
 
-  FBtnProperties := CreateToolBtn(198, 'Show torrent properties (Alt+Enter)', @ActProperties);
-  FBtnWebUi := CreateToolBtn(236, 'Open Web Interface in Browser (Ctrl+W)', @ActOpenWebUi);
+  FBtnStart := CreateToolBtn(112, 'Start selected torrents (Ctrl+S)', @ActStartSelected);
+  FBtnPause := CreateToolBtn(158, 'Pause selected torrents (Ctrl+P)', @ActPauseSelected);
+  FBtnRemove := CreateToolBtn(204, 'Remove selected torrents (Del)', @ActRemoveSelected);
+
+  Sep := TPanel.Create(FPnlToolbar);
+  Sep.Parent := FPnlToolbar;
+  Sep.BevelOuter := bvNone;
+  Sep.Color := RGBToColor(226, 232, 240);
+  Sep.Left := 252;
+  Sep.Top := 12;
+  Sep.Width := 1;
+  Sep.Height := 24;
+
+  FBtnProperties := CreateToolBtn(260, 'Show torrent properties (Alt+Enter)', @ActProperties);
+  FBtnWebUi := CreateToolBtn(306, 'Open Web Interface in Browser (Ctrl+W)', @ActOpenWebUi);
 
   RenderToolbarIcons;
 end;
 
 procedure TMainForm.RenderToolbarIcons;
-  procedure DrawGlyphIcon(C: TCanvas; Kind, OffsetX: Integer; PenCol: TColor);
+  procedure DrawGlyphIcon(C: TCanvas; Kind, OffsetX: Integer; PrimaryCol, FillTintCol: TColor);
   begin
-    C.Pen.Color := PenCol;
+    C.Pen.Color := PrimaryCol;
     C.Pen.Width := 2;
-    C.Brush.Style := bsClear;
+    C.Brush.Color := FillTintCol;
+    C.Brush.Style := bsSolid;
 
     case Kind of
-      1: // Open File (Page outline + up arrow)
+      1: // Open File (Modern rounded page + accent down-arrow)
         begin
           C.Polygon([Point(OffsetX + 5, 3), Point(OffsetX + 14, 3), Point(OffsetX + 19, 8), Point(OffsetX + 19, 21), Point(OffsetX + 5, 21)]);
+          C.Brush.Style := bsClear;
           C.MoveTo(OffsetX + 14, 3); C.LineTo(OffsetX + 14, 8); C.LineTo(OffsetX + 19, 8);
-          C.MoveTo(OffsetX + 12, 18); C.LineTo(OffsetX + 12, 10);
-          C.MoveTo(OffsetX + 9, 13); C.LineTo(OffsetX + 12, 10); C.LineTo(OffsetX + 15, 13);
+          C.MoveTo(OffsetX + 12, 10); C.LineTo(OffsetX + 12, 18);
+          C.MoveTo(OffsetX + 9, 15); C.LineTo(OffsetX + 12, 18); C.LineTo(OffsetX + 15, 15);
         end;
-      2: // Open URL (Globe)
+      2: // Open URL / Magnet (Globe with ring)
         begin
           C.Ellipse(OffsetX + 3, 3, OffsetX + 21, 21);
+          C.Brush.Style := bsClear;
           C.Ellipse(OffsetX + 8, 3, OffsetX + 16, 21);
           C.MoveTo(OffsetX + 3, 12); C.LineTo(OffsetX + 21, 12);
           C.MoveTo(OffsetX + 5, 7); C.LineTo(OffsetX + 19, 7);
           C.MoveTo(OffsetX + 5, 17); C.LineTo(OffsetX + 19, 17);
         end;
-      3: // Start (Play triangle)
+      3: // Start (Filled emerald play triangle)
         begin
           C.Polygon([Point(OffsetX + 7, 4), Point(OffsetX + 19, 12), Point(OffsetX + 7, 20)]);
         end;
-      4: // Pause (Two vertical bars)
+      4: // Pause (Rounded twin bars)
         begin
-          C.MoveTo(OffsetX + 8, 5); C.LineTo(OffsetX + 8, 19);
-          C.MoveTo(OffsetX + 16, 5); C.LineTo(OffsetX + 16, 19);
+          C.RoundRect(OffsetX + 6, 4, OffsetX + 10, 20, 2, 2);
+          C.RoundRect(OffsetX + 14, 4, OffsetX + 18, 20, 2, 2);
         end;
-      5: // Remove (Horizontal minus line)
-        begin
-          C.MoveTo(OffsetX + 4, 12); C.LineTo(OffsetX + 20, 12);
-        end;
-      6: // Properties (Circle with 'i')
+      5: // Remove (Soft circle + bold minus)
         begin
           C.Ellipse(OffsetX + 3, 3, OffsetX + 21, 21);
-          C.MoveTo(OffsetX + 12, 10); C.LineTo(OffsetX + 12, 17);
-          C.Pixels[OffsetX + 12, 7] := PenCol;
-          C.Pixels[OffsetX + 11, 7] := PenCol;
-          C.Pixels[OffsetX + 12, 6] := PenCol;
+          C.Brush.Style := bsClear;
+          C.MoveTo(OffsetX + 8, 12); C.LineTo(OffsetX + 16, 12);
         end;
-      7: // Web UI (Browser window with top bar)
+      6: // Properties (Slate badge + 'i')
         begin
-          C.Rectangle(OffsetX + 3, 4, OffsetX + 21, 20);
+          C.Ellipse(OffsetX + 3, 3, OffsetX + 21, 21);
+          C.Brush.Style := bsClear;
+          C.MoveTo(OffsetX + 12, 10); C.LineTo(OffsetX + 12, 17);
+          C.Pixels[OffsetX + 12, 7] := PrimaryCol;
+          C.Pixels[OffsetX + 11, 7] := PrimaryCol;
+          C.Pixels[OffsetX + 12, 6] := PrimaryCol;
+        end;
+      7: // Web UI (Browser window with accent header)
+        begin
+          C.RoundRect(OffsetX + 3, 4, OffsetX + 21, 20, 3, 3);
+          C.Brush.Style := bsClear;
           C.MoveTo(OffsetX + 3, 9); C.LineTo(OffsetX + 21, 9);
-          C.Pixels[OffsetX + 6, 6] := PenCol;
-          C.Pixels[OffsetX + 9, 6] := PenCol;
-          C.MoveTo(OffsetX + 8, 14); C.LineTo(OffsetX + 16, 14);
+          C.Pixels[OffsetX + 6, 6] := PrimaryCol;
+          C.Pixels[OffsetX + 9, 6] := PrimaryCol;
+          C.MoveTo(OffsetX + 7, 14); C.LineTo(OffsetX + 17, 14);
         end;
     end;
   end;
 
-  procedure AssignBtnIcon(Btn: TSpeedButton; Kind: Integer);
+  procedure AssignBtnIcon(Btn: TSpeedButton; Kind: Integer; ActiveCol, TintCol: TColor);
   var
     Bmp: TBitmap;
     C: TCanvas;
@@ -862,8 +889,8 @@ procedure TMainForm.RenderToolbarIcons;
       C.Brush.Color := clFuchsia;
       C.FillRect(0, 0, 48, 24);
 
-      DrawGlyphIcon(C, Kind, 0, RGBToColor(68, 68, 68));
-      DrawGlyphIcon(C, Kind, 24, RGBToColor(180, 180, 180));
+      DrawGlyphIcon(C, Kind, 0, ActiveCol, TintCol);
+      DrawGlyphIcon(C, Kind, 24, RGBToColor(195, 203, 214), RGBToColor(241, 245, 249));
 
       Btn.NumGlyphs := 2;
       Btn.Glyph.Assign(Bmp);
@@ -872,13 +899,13 @@ procedure TMainForm.RenderToolbarIcons;
     end;
   end;
 begin
-  AssignBtnIcon(FBtnOpenFile, 1);
-  AssignBtnIcon(FBtnOpenUrl, 2);
-  AssignBtnIcon(FBtnStart, 3);
-  AssignBtnIcon(FBtnPause, 4);
-  AssignBtnIcon(FBtnRemove, 5);
-  AssignBtnIcon(FBtnProperties, 6);
-  AssignBtnIcon(FBtnWebUi, 7);
+  AssignBtnIcon(FBtnOpenFile, 1, RGBToColor(37, 99, 235), RGBToColor(239, 246, 255));
+  AssignBtnIcon(FBtnOpenUrl, 2, RGBToColor(79, 70, 229), RGBToColor(238, 242, 255));
+  AssignBtnIcon(FBtnStart, 3, RGBToColor(22, 163, 74), RGBToColor(220, 252, 231));
+  AssignBtnIcon(FBtnPause, 4, RGBToColor(217, 119, 6), RGBToColor(254, 243, 199));
+  AssignBtnIcon(FBtnRemove, 5, RGBToColor(225, 29, 72), RGBToColor(255, 228, 230));
+  AssignBtnIcon(FBtnProperties, 6, RGBToColor(51, 65, 85), RGBToColor(241, 245, 249));
+  AssignBtnIcon(FBtnWebUi, 7, RGBToColor(8, 145, 178), RGBToColor(207, 250, 254));
 end;
 
 procedure TMainForm.RenderStatusBarIcons;
@@ -999,39 +1026,36 @@ end;
 procedure TMainForm.BuildFilterBar;
 var
   LblShow: TLabel;
-  TopLine, BotLine: TBevel;
+  BotLine: TPanel;
 begin
   FPnlFilterBar := TPanel.Create(Self);
   FPnlFilterBar.Parent := Self;
   FPnlFilterBar.Align := alTop;
-  FPnlFilterBar.Height := 34;
+  FPnlFilterBar.Height := 40;
   FPnlFilterBar.BevelOuter := bvNone;
-  FPnlFilterBar.Color := RGBToColor(246, 246, 246);
+  FPnlFilterBar.Color := RGBToColor(248, 250, 252);
   FPnlFilterBar.DoubleBuffered := True;
 
-  TopLine := TBevel.Create(FPnlFilterBar);
-  TopLine.Parent := FPnlFilterBar;
-  TopLine.Align := alTop;
-  TopLine.Height := 2;
-  TopLine.Shape := bsTopLine;
-
-  BotLine := TBevel.Create(FPnlFilterBar);
+  BotLine := TPanel.Create(FPnlFilterBar);
   BotLine.Parent := FPnlFilterBar;
   BotLine.Align := alBottom;
-  BotLine.Height := 2;
-  BotLine.Shape := bsBottomLine;
+  BotLine.Height := 1;
+  BotLine.BevelOuter := bvNone;
+  BotLine.Color := RGBToColor(226, 232, 240);
 
   LblShow := TLabel.Create(FPnlFilterBar);
   LblShow.Parent := FPnlFilterBar;
-  LblShow.Left := 8;
-  LblShow.Top := 9;
+  LblShow.Left := 12;
+  LblShow.Top := 11;
+  LblShow.Font.Style := [fsBold];
+  LblShow.Font.Color := RGBToColor(100, 116, 139);
   LblShow.Caption := 'Show:';
 
   FCmbShowState := TComboBox.Create(FPnlFilterBar);
   FCmbShowState.Parent := FPnlFilterBar;
-  FCmbShowState.Left := 48;
-  FCmbShowState.Top := 5;
-  FCmbShowState.Width := 155;
+  FCmbShowState.Left := 54;
+  FCmbShowState.Top := 7;
+  FCmbShowState.Width := 160;
   FCmbShowState.Style := csDropDownList;
   FCmbShowState.Items.Add('All');
   FCmbShowState.Items.Add('Active');
@@ -1046,9 +1070,9 @@ begin
 
   FCmbTracker := TComboBox.Create(FPnlFilterBar);
   FCmbTracker.Parent := FPnlFilterBar;
-  FCmbTracker.Left := 210;
-  FCmbTracker.Top := 5;
-  FCmbTracker.Width := 160;
+  FCmbTracker.Left := 222;
+  FCmbTracker.Top := 7;
+  FCmbTracker.Width := 165;
   FCmbTracker.Style := csDropDownList;
   FCmbTracker.Items.Add('All');
   FCmbTracker.ItemIndex := 0;
@@ -1056,10 +1080,10 @@ begin
 
   FEdtSearch := TEdit.Create(FPnlFilterBar);
   FEdtSearch.Parent := FPnlFilterBar;
-  FEdtSearch.Left := FPnlFilterBar.Width - 235;
-  FEdtSearch.Top := 5;
-  FEdtSearch.Width := 227;
-  FEdtSearch.TextHint := 'Search...';
+  FEdtSearch.Left := FPnlFilterBar.Width - 250;
+  FEdtSearch.Top := 7;
+  FEdtSearch.Width := 238;
+  FEdtSearch.TextHint := 'Search torrents...';
   FEdtSearch.OnChange := @FilterControlChange;
 
   FPnlFilterBar.OnResize := @FilterBarResize;
@@ -1068,27 +1092,28 @@ end;
 
 procedure TMainForm.BuildStatusBar;
 var
-  TopLine: TBevel;
+  TopLine: TPanel;
 begin
   FPnlStatusBar := TPanel.Create(Self);
   FPnlStatusBar.Parent := Self;
   FPnlStatusBar.Align := alBottom;
-  FPnlStatusBar.Height := 28;
+  FPnlStatusBar.Height := 32;
   FPnlStatusBar.BevelOuter := bvNone;
-  FPnlStatusBar.Color := RGBToColor(246, 246, 246);
+  FPnlStatusBar.Color := RGBToColor(248, 250, 252);
   FPnlStatusBar.DoubleBuffered := True;
 
-  TopLine := TBevel.Create(FPnlStatusBar);
+  TopLine := TPanel.Create(FPnlStatusBar);
   TopLine.Parent := FPnlStatusBar;
   TopLine.Align := alTop;
-  TopLine.Height := 2;
-  TopLine.Shape := bsTopLine;
+  TopLine.Height := 1;
+  TopLine.BevelOuter := bvNone;
+  TopLine.Color := RGBToColor(226, 232, 240);
 
   FBtnOptionsMenu := TSpeedButton.Create(FPnlStatusBar);
   FBtnOptionsMenu.Parent := FPnlStatusBar;
-  FBtnOptionsMenu.Left := 4;
-  FBtnOptionsMenu.Top := 3;
-  FBtnOptionsMenu.Width := 24;
+  FBtnOptionsMenu.Left := 8;
+  FBtnOptionsMenu.Top := 5;
+  FBtnOptionsMenu.Width := 26;
   FBtnOptionsMenu.Height := 22;
   FBtnOptionsMenu.Flat := True;
   FBtnOptionsMenu.Hint := 'Transmission Options';
@@ -1097,8 +1122,8 @@ begin
 
   FBtnAltSpeed := TSpeedButton.Create(FPnlStatusBar);
   FBtnAltSpeed.Parent := FPnlStatusBar;
-  FBtnAltSpeed.Left := 30;
-  FBtnAltSpeed.Top := 3;
+  FBtnAltSpeed.Left := 36;
+  FBtnAltSpeed.Top := 5;
   FBtnAltSpeed.Width := 28;
   FBtnAltSpeed.Height := 22;
   FBtnAltSpeed.Flat := True;
@@ -1110,8 +1135,8 @@ begin
 
   FBtnGlobalTrackerPause := TSpeedButton.Create(FPnlStatusBar);
   FBtnGlobalTrackerPause.Parent := FPnlStatusBar;
-  FBtnGlobalTrackerPause.Left := 62;
-  FBtnGlobalTrackerPause.Top := 3;
+  FBtnGlobalTrackerPause.Left := 68;
+  FBtnGlobalTrackerPause.Top := 5;
   FBtnGlobalTrackerPause.Width := 118;
   FBtnGlobalTrackerPause.Height := 22;
   FBtnGlobalTrackerPause.Flat := True;
@@ -1121,19 +1146,21 @@ begin
   FBtnGlobalTrackerPause.Spacing := 4;
   FBtnGlobalTrackerPause.Hint := 'ปิด/เปิด การส่ง Packet ไปหา Tracker ทั้งโปรแกรม';
   FBtnGlobalTrackerPause.ShowHint := True;
+  FBtnGlobalTrackerPause.Font.Style := [fsBold];
   FBtnGlobalTrackerPause.Caption := 'Tracker: ON';
   FBtnGlobalTrackerPause.OnClick := @ActToggleGlobalTrackerPause;
 
   FLblStatusInfo := TLabel.Create(FPnlStatusBar);
   FLblStatusInfo.Parent := FPnlStatusBar;
-  FLblStatusInfo.Left := 186;
-  FLblStatusInfo.Top := 6;
+  FLblStatusInfo.Left := 194;
+  FLblStatusInfo.Top := 8;
+  FLblStatusInfo.Font.Color := RGBToColor(71, 85, 105);
   FLblStatusInfo.Caption := '';
 
   FBtnStatsMode := TSpeedButton.Create(FPnlStatusBar);
   FBtnStatsMode.Parent := FPnlStatusBar;
-  FBtnStatsMode.Left := FPnlStatusBar.Width - 28;
-  FBtnStatsMode.Top := 3;
+  FBtnStatsMode.Left := FPnlStatusBar.Width - 32;
+  FBtnStatsMode.Top := 5;
   FBtnStatsMode.Width := 24;
   FBtnStatsMode.Height := 22;
   FBtnStatsMode.Flat := True;
@@ -1143,26 +1170,31 @@ begin
 
   FLblRatioInfo := TLabel.Create(FPnlStatusBar);
   FLblRatioInfo.Parent := FPnlStatusBar;
-  FLblRatioInfo.Left := FPnlStatusBar.Width - 155;
-  FLblRatioInfo.Top := 6;
-  FLblRatioInfo.Width := 122;
+  FLblRatioInfo.Left := FPnlStatusBar.Width - 165;
+  FLblRatioInfo.Top := 8;
+  FLblRatioInfo.Width := 128;
   FLblRatioInfo.Alignment := taRightJustify;
+  FLblRatioInfo.Font.Color := RGBToColor(51, 65, 85);
   FLblRatioInfo.Caption := 'Ratio: 0.00';
 
   FLblUpSpeed := TLabel.Create(FPnlStatusBar);
   FLblUpSpeed.Parent := FPnlStatusBar;
-  FLblUpSpeed.Left := FPnlStatusBar.Width - 260;
-  FLblUpSpeed.Top := 6;
-  FLblUpSpeed.Width := 95;
+  FLblUpSpeed.Left := FPnlStatusBar.Width - 280;
+  FLblUpSpeed.Top := 8;
+  FLblUpSpeed.Width := 105;
   FLblUpSpeed.Alignment := taRightJustify;
+  FLblUpSpeed.Font.Style := [fsBold];
+  FLblUpSpeed.Font.Color := RGBToColor(37, 99, 235);
   FLblUpSpeed.Caption := '';
 
   FLblDownSpeed := TLabel.Create(FPnlStatusBar);
   FLblDownSpeed.Parent := FPnlStatusBar;
-  FLblDownSpeed.Left := FPnlStatusBar.Width - 365;
-  FLblDownSpeed.Top := 6;
-  FLblDownSpeed.Width := 95;
+  FLblDownSpeed.Left := FPnlStatusBar.Width - 395;
+  FLblDownSpeed.Top := 8;
+  FLblDownSpeed.Width := 105;
   FLblDownSpeed.Alignment := taRightJustify;
+  FLblDownSpeed.Font.Style := [fsBold];
+  FLblDownSpeed.Font.Color := RGBToColor(22, 163, 74);
   FLblDownSpeed.Caption := '';
 
   FPnlStatusBar.OnResize := @StatusBarResize;
@@ -1184,7 +1216,8 @@ begin
   FSplitDetails := TSplitter.Create(Self);
   FSplitDetails.Parent := Self;
   FSplitDetails.Align := alBottom;
-  FSplitDetails.Height := 5;
+  FSplitDetails.Height := 4;
+  FSplitDetails.Color := RGBToColor(226, 232, 240);
   FSplitDetails.MinSize := 140;
   FSplitDetails.Visible := False;
   FSplitDetails.OnMoved := @SplitDetailsMoved;
@@ -1213,147 +1246,172 @@ begin
   FLstTorrents.OnKeyDown := @LstTorrentsKeyDown;
 end;
 
-{ วาดไอคอนไฟล์ขนาดเล็กด้านซ้ายของชื่อทอร์เรนต์ (เปลี่ยนสีตามสถานะ ปกติ / หยุดชั่วคราว / มีข้อผิดพลาด) }
+{ วาดไอคอนสถานะแบบ Modern Rounded Badge ด้านซ้ายของชื่อทอร์เรนต์ }
 procedure TMainForm.DrawFileIcon(C: TCanvas; R: TRect; IsPaused, HasErr: Boolean);
 var
   BorderCol, FillCol, AccCol: TColor;
+  Cx, Cy: Integer;
 begin
   if HasErr then
   begin
-    BorderCol := RGBToColor(200, 45, 45);
-    FillCol := RGBToColor(255, 235, 235);
-    AccCol := RGBToColor(210, 50, 50);
+    BorderCol := RGBToColor(254, 202, 202);
+    FillCol := RGBToColor(254, 242, 242);
+    AccCol := RGBToColor(220, 38, 38);
   end
   else if IsPaused then
   begin
-    BorderCol := RGBToColor(160, 160, 160);
-    FillCol := RGBToColor(242, 242, 242);
-    AccCol := RGBToColor(150, 150, 150);
+    BorderCol := RGBToColor(226, 232, 240);
+    FillCol := RGBToColor(248, 250, 252);
+    AccCol := RGBToColor(148, 163, 184);
   end
   else
   begin
-    BorderCol := RGBToColor(90, 130, 180);
-    FillCol := RGBToColor(240, 247, 255);
-    AccCol := RGBToColor(55, 115, 195);
+    BorderCol := RGBToColor(191, 219, 254);
+    FillCol := RGBToColor(239, 246, 255);
+    AccCol := RGBToColor(37, 99, 235);
   end;
 
   C.Brush.Style := bsSolid;
   C.Brush.Color := FillCol;
   C.Pen.Color := BorderCol;
   C.Pen.Width := 1;
-  C.Polygon([
-    Point(R.Left + 2, R.Top + 1),
-    Point(R.Right - 5, R.Top + 1),
-    Point(R.Right - 1, R.Top + 5),
-    Point(R.Right - 1, R.Bottom - 1),
-    Point(R.Left + 2, R.Bottom - 1)
-  ]);
+  C.RoundRect(R.Left, R.Top, R.Right, R.Bottom, 6, 6);
 
-  C.Brush.Color := AccCol;
+  Cx := (R.Left + R.Right) div 2;
+  Cy := (R.Top + R.Bottom) div 2;
   C.Pen.Color := AccCol;
-  C.Polygon([
-    Point(R.Left + 6, R.Top + 5),
-    Point(R.Right - 4, (R.Top + R.Bottom) div 2),
-    Point(R.Left + 6, R.Bottom - 5)
-  ]);
+  C.Brush.Color := AccCol;
+  C.Pen.Width := 2;
+
+  if HasErr then
+  begin
+    C.MoveTo(Cx, R.Top + 4); C.LineTo(Cx, Cy + 1);
+    C.Pixels[Cx, R.Bottom - 5] := AccCol;
+    C.Pixels[Cx - 1, R.Bottom - 5] := AccCol;
+  end
+  else if IsPaused then
+  begin
+    C.MoveTo(Cx - 2, R.Top + 5); C.LineTo(Cx - 2, R.Bottom - 5);
+    C.MoveTo(Cx + 2, R.Top + 5); C.LineTo(Cx + 2, R.Bottom - 5);
+  end
+  else
+  begin
+    C.MoveTo(Cx, R.Top + 4); C.LineTo(Cx, R.Bottom - 5);
+    C.MoveTo(Cx - 3, R.Bottom - 8); C.LineTo(Cx, R.Bottom - 5); C.LineTo(Cx + 3, R.Bottom - 8);
+  end;
+  C.Pen.Width := 1;
 end;
 
-{ เมธอด Owner-Draw สำหรับวาดแต่ละแถวในรายการทอร์เรนต์ (รองรับทั้งโหมด Compact View และ Full View 4 บรรทัด) }
+{ เมธอด Owner-Draw สไตล์ Modern Premium สำหรับวาดแต่ละแถวในรายการทอร์เรนต์ }
 procedure TMainForm.LstTorrentsDrawItem(Control: TWinControl; Index: Integer;
   ARect: TRect; State: TOwnerDrawState);
 var
   C: TCanvas;
   T: TTorrentItem;
-  IsSelected: Boolean;
-  BgCol, NameCol, SubCol, BarFillCol, BarBackCol, BarBorderCol: TColor;
-  IconR, BarR: TRect;
-  StatusStr, PctStr, Line2, Line3: string;
-  StatusW, FillW, TextW, TextH: Integer;
+  IsSelected, TrkOff: Boolean;
+  BgCol, AccentCol, NameCol, SubCol, BarFillCol, BarBackCol, BarBorderCol, GlossCol: TColor;
+  IconR, BarR, FillR, PillR: TRect;
+  StatusStr, PctStr, Line2, Line3, BadgeTxt: string;
+  StatusW, FillW, TextW, TextH, BadgeW, MaxTitleRight: Integer;
   PctFrac: Double;
 begin
   if (Index < 0) or (Index >= FFilteredTorrents.Count) then Exit;
   T := TTorrentItem(FFilteredTorrents[Index]);
   C := FLstTorrents.Canvas;
   IsSelected := odSelected in State;
+  TrkOff := T.TrackerPaused or FSessionConfig.TrackerPaused;
 
   if IsSelected then
-    BgCol := RGBToColor(204, 228, 247)
+    BgCol := RGBToColor(239, 246, 255)
   else if Odd(Index) then
-    BgCol := RGBToColor(249, 249, 249)
+    BgCol := RGBToColor(250, 252, 255)
   else
-    BgCol := clWindow;
+    BgCol := clWhite;
 
   C.Brush.Style := bsSolid;
   C.Brush.Color := BgCol;
   C.FillRect(ARect);
 
   if T.HasError then
-    NameCol := RGBToColor(200, 30, 30)
-  else if T.IsPaused then
-    NameCol := RGBToColor(120, 120, 120)
-  else
-    NameCol := RGBToColor(25, 25, 25);
-
-  SubCol := RGBToColor(95, 95, 95);
-
-  if T.HasError then
   begin
-    BarFillCol := RGBToColor(215, 70, 70);
-    BarBackCol := RGBToColor(245, 220, 220);
-    BarBorderCol := RGBToColor(185, 60, 60);
+    NameCol := RGBToColor(185, 28, 28);
+    AccentCol := RGBToColor(239, 68, 68);
+    BarFillCol := RGBToColor(239, 68, 68);
+    GlossCol := RGBToColor(248, 113, 113);
+    BarBackCol := RGBToColor(254, 226, 226);
+    BarBorderCol := RGBToColor(252, 165, 165);
   end
   else if T.IsPaused then
   begin
-    BarFillCol := RGBToColor(165, 165, 165);
-    BarBackCol := RGBToColor(232, 232, 232);
-    BarBorderCol := RGBToColor(150, 150, 150);
+    NameCol := RGBToColor(100, 116, 139);
+    AccentCol := RGBToColor(148, 163, 184);
+    BarFillCol := RGBToColor(148, 163, 184);
+    GlossCol := RGBToColor(180, 192, 208);
+    BarBackCol := RGBToColor(226, 232, 240);
+    BarBorderCol := RGBToColor(203, 213, 225);
   end
   else if T.IsSeeding or (T.PercentDone >= 0.9999) then
   begin
-    BarFillCol := RGBToColor(38, 162, 69);
-    BarBackCol := RGBToColor(214, 238, 219);
-    BarBorderCol := RGBToColor(32, 138, 58);
+    NameCol := RGBToColor(15, 23, 42);
+    AccentCol := RGBToColor(16, 185, 129);
+    BarFillCol := RGBToColor(16, 185, 129);
+    GlossCol := RGBToColor(52, 211, 153);
+    BarBackCol := RGBToColor(209, 250, 229);
+    BarBorderCol := RGBToColor(167, 243, 208);
   end
   else
   begin
-    BarFillCol := RGBToColor(52, 132, 228);
-    BarBackCol := RGBToColor(216, 232, 250);
-    BarBorderCol := RGBToColor(42, 112, 198);
+    NameCol := RGBToColor(15, 23, 42);
+    AccentCol := RGBToColor(37, 99, 235);
+    BarFillCol := RGBToColor(37, 99, 235);
+    GlossCol := RGBToColor(96, 165, 250);
+    BarBackCol := RGBToColor(219, 234, 254);
+    BarBorderCol := RGBToColor(191, 219, 254);
   end;
 
+  if IsSelected then
+  begin
+    C.Brush.Color := AccentCol;
+    C.FillRect(Rect(ARect.Left, ARect.Top + 2, ARect.Left + 3, ARect.Bottom - 2));
+  end;
+
+  SubCol := RGBToColor(100, 116, 139);
   PctFrac := EnsureRange(T.PercentDone, 0.0, 1.0);
 
   if FCompactView then
   begin
-    IconR := Rect(ARect.Left + 8, ARect.Top + 6, ARect.Left + 24, ARect.Top + 22);
+    IconR := Rect(ARect.Left + 10, ARect.Top + 7, ARect.Left + 32, ARect.Top + 29);
     DrawFileIcon(C, IconR, T.IsPaused, T.HasError);
 
-    BarR := Rect(ARect.Right - 92, ARect.Top + 6, ARect.Right - 8, ARect.Bottom - 6);
-
+    BarR := Rect(ARect.Right - 114, ARect.Top + 10, ARect.Right - 12, ARect.Bottom - 10);
+    C.Brush.Style := bsSolid;
     C.Brush.Color := BarBackCol;
     C.Pen.Color := BarBorderCol;
-    C.Rectangle(BarR);
+    C.RoundRect(BarR.Left, BarR.Top, BarR.Right, BarR.Bottom, 8, 8);
 
     FillW := Round((BarR.Right - BarR.Left - 2) * PctFrac);
-    if FillW > 0 then
+    if FillW > 3 then
     begin
+      FillR := Rect(BarR.Left + 1, BarR.Top + 1, BarR.Left + 1 + FillW, BarR.Bottom - 1);
       C.Brush.Color := BarFillCol;
       C.Pen.Style := psClear;
-      C.FillRect(Rect(BarR.Left + 1, BarR.Top + 1, BarR.Left + 1 + FillW, BarR.Bottom - 1));
+      C.RoundRect(FillR.Left, FillR.Top, FillR.Right, FillR.Bottom, 6, 6);
+      C.Brush.Color := GlossCol;
+      C.FillRect(Rect(FillR.Left + 2, FillR.Top + 1, FillR.Right - 2, FillR.Top + 3));
       C.Pen.Style := psSolid;
     end;
 
     PctStr := Format('%d%%', [Round(PctFrac * 100)]);
     C.Font.Name := 'Segoe UI';
     C.Font.Size := 8;
-    C.Font.Style := [];
+    C.Font.Style := [fsBold];
     TextW := C.TextWidth(PctStr);
     TextH := C.TextHeight(PctStr);
     C.Brush.Style := bsClear;
     if FillW > (BarR.Right - BarR.Left) div 2 then
       C.Font.Color := clWhite
     else
-      C.Font.Color := RGBToColor(40, 40, 40);
+      C.Font.Color := RGBToColor(30, 41, 59);
     C.TextOut(
       BarR.Left + ((BarR.Right - BarR.Left) - TextW) div 2,
       BarR.Top + ((BarR.Bottom - BarR.Top) - TextH) div 2,
@@ -1361,69 +1419,119 @@ begin
     );
 
     StatusStr := T.ShortStatusString;
-    if T.TrackerPaused or FSessionConfig.TrackerPaused then
-      StatusStr := StatusStr + ' [No Tracker]';
     C.Font.Size := 8;
+    C.Font.Style := [];
     C.Font.Color := SubCol;
     StatusW := C.TextWidth(StatusStr);
-    C.TextOut(BarR.Left - StatusW - 10, ARect.Top + ((ARect.Bottom - ARect.Top) - C.TextHeight(StatusStr)) div 2, StatusStr);
+    C.TextOut(BarR.Left - StatusW - 12, ARect.Top + ((ARect.Bottom - ARect.Top) - C.TextHeight(StatusStr)) div 2, StatusStr);
+
+    MaxTitleRight := BarR.Left - StatusW - 22;
+    if TrkOff then
+    begin
+      BadgeTxt := 'No Tracker';
+      C.Font.Size := 7;
+      C.Font.Style := [fsBold];
+      BadgeW := C.TextWidth(BadgeTxt) + 12;
+      PillR := Rect(MaxTitleRight - BadgeW, ARect.Top + 9, MaxTitleRight, ARect.Bottom - 9);
+      C.Brush.Style := bsSolid;
+      C.Brush.Color := RGBToColor(254, 226, 226);
+      C.Pen.Color := RGBToColor(252, 165, 165);
+      C.RoundRect(PillR.Left, PillR.Top, PillR.Right, PillR.Bottom, 8, 8);
+      C.Brush.Style := bsClear;
+      C.Font.Color := RGBToColor(185, 28, 28);
+      C.TextOut(PillR.Left + 6, PillR.Top + ((PillR.Bottom - PillR.Top - C.TextHeight(BadgeTxt)) div 2), BadgeTxt);
+      MaxTitleRight := PillR.Left - 8;
+    end;
 
     C.Font.Size := 9;
-    C.Font.Style := [];
+    if IsSelected then
+      C.Font.Style := [fsBold]
+    else
+      C.Font.Style := [];
     C.Font.Color := NameCol;
     C.TextRect(
-      Rect(IconR.Right + 8, ARect.Top + 2, BarR.Left - StatusW - 18, ARect.Bottom - 2),
-      IconR.Right + 8,
+      Rect(IconR.Right + 10, ARect.Top + 2, MaxTitleRight, ARect.Bottom - 2),
+      IconR.Right + 10,
       ARect.Top + ((ARect.Bottom - ARect.Top) - C.TextHeight(T.Name)) div 2,
       T.Name
     );
   end
   else
   begin
-    IconR := Rect(ARect.Left + 10, ARect.Top + 18, ARect.Left + 34, ARect.Top + 42);
+    IconR := Rect(ARect.Left + 12, ARect.Top + 22, ARect.Left + 40, ARect.Top + 50);
     DrawFileIcon(C, IconR, T.IsPaused, T.HasError);
 
     C.Brush.Style := bsClear;
-
     C.Font.Name := 'Segoe UI';
-    C.Font.Size := 9;
+
+    MaxTitleRight := ARect.Right - 14;
+    if TrkOff then
+    begin
+      BadgeTxt := 'Tracker Paused';
+      C.Font.Size := 7;
+      C.Font.Style := [fsBold];
+      BadgeW := C.TextWidth(BadgeTxt) + 12;
+      PillR := Rect(MaxTitleRight - BadgeW, ARect.Top + 6, MaxTitleRight, ARect.Top + 23);
+      C.Brush.Style := bsSolid;
+      C.Brush.Color := RGBToColor(254, 226, 226);
+      C.Pen.Color := RGBToColor(252, 165, 165);
+      C.RoundRect(PillR.Left, PillR.Top, PillR.Right, PillR.Bottom, 8, 8);
+      C.Brush.Style := bsClear;
+      C.Font.Color := RGBToColor(185, 28, 28);
+      C.TextOut(PillR.Left + 6, PillR.Top + ((PillR.Bottom - PillR.Top - C.TextHeight(BadgeTxt)) div 2), BadgeTxt);
+      MaxTitleRight := PillR.Left - 8;
+    end;
+
+    C.Font.Size := 10;
     C.Font.Style := [fsBold];
     C.Font.Color := NameCol;
-    C.TextOut(IconR.Right + 10, ARect.Top + 4, T.Name);
+    C.TextRect(
+      Rect(IconR.Right + 12, ARect.Top + 4, MaxTitleRight, ARect.Top + 28),
+      IconR.Right + 12, ARect.Top + 4, T.Name
+    );
 
     Line2 := T.FullStatusString;
-    if T.TrackerPaused or FSessionConfig.TrackerPaused then
-      Line2 := Line2 + '  [Tracker Packets Paused]';
     C.Font.Size := 8;
     C.Font.Style := [];
-    C.Font.Color := SubCol;
-    C.TextOut(IconR.Right + 10, ARect.Top + 21, Line2);
+    C.Font.Color := RGBToColor(71, 85, 105);
+    C.TextOut(IconR.Right + 12, ARect.Top + 28, Line2);
 
-    BarR := Rect(IconR.Right + 10, ARect.Top + 37, ARect.Right - 12, ARect.Top + 49);
+    BarR := Rect(IconR.Right + 12, ARect.Top + 46, ARect.Right - 58, ARect.Top + 58);
     C.Brush.Style := bsSolid;
     C.Brush.Color := BarBackCol;
     C.Pen.Color := BarBorderCol;
-    C.Rectangle(BarR);
+    C.RoundRect(BarR.Left, BarR.Top, BarR.Right, BarR.Bottom, 6, 6);
 
     FillW := Round((BarR.Right - BarR.Left - 2) * PctFrac);
-    if FillW > 0 then
+    if FillW > 3 then
     begin
+      FillR := Rect(BarR.Left + 1, BarR.Top + 1, BarR.Left + 1 + FillW, BarR.Bottom - 1);
       C.Brush.Color := BarFillCol;
       C.Pen.Style := psClear;
-      C.FillRect(Rect(BarR.Left + 1, BarR.Top + 1, BarR.Left + 1 + FillW, BarR.Bottom - 1));
+      C.RoundRect(FillR.Left, FillR.Top, FillR.Right, FillR.Bottom, 5, 5);
+      C.Brush.Color := GlossCol;
+      C.FillRect(Rect(FillR.Left + 2, FillR.Top + 1, FillR.Right - 2, FillR.Top + 3));
       C.Pen.Style := psSolid;
     end;
 
-    Line3 := T.ProgressSummaryString(FSessionConfig.SeedRatioLimited, FSessionConfig.SeedRatioLimit);
+    PctStr := Format('%d%%', [Round(PctFrac * 100)]);
     C.Brush.Style := bsClear;
     C.Font.Size := 8;
-    C.Font.Color := SubCol;
-    C.TextOut(IconR.Right + 10, ARect.Top + 51, Line3);
+    C.Font.Style := [fsBold];
+    C.Font.Color := RGBToColor(51, 65, 85);
+    C.TextOut(BarR.Right + 8, BarR.Top - 2, PctStr);
 
-    C.Pen.Color := RGBToColor(236, 236, 236);
-    C.MoveTo(ARect.Left, ARect.Bottom - 1);
-    C.LineTo(ARect.Right, ARect.Bottom - 1);
+    Line3 := T.ProgressSummaryString(FSessionConfig.SeedRatioLimited, FSessionConfig.SeedRatioLimit);
+    C.Font.Size := 8;
+    C.Font.Style := [];
+    C.Font.Color := SubCol;
+    C.TextOut(IconR.Right + 12, ARect.Top + 61, Line3);
   end;
+
+  C.Pen.Color := RGBToColor(241, 245, 249);
+  C.Pen.Style := psSolid;
+  C.MoveTo(ARect.Left, ARect.Bottom - 1);
+  C.LineTo(ARect.Right, ARect.Bottom - 1);
 end;
 
 procedure TMainForm.LstTorrentsResize(Sender: TObject);
@@ -1436,10 +1544,10 @@ var
   AvailW, SearchW: Integer;
 begin
   if (FPnlFilterBar = nil) or (FEdtSearch = nil) then Exit;
-  AvailW := FPnlFilterBar.ClientWidth - 386;
-  SearchW := EnsureRange(AvailW, 100, 240);
+  AvailW := FPnlFilterBar.ClientWidth - 408;
+  SearchW := EnsureRange(AvailW, 110, 260);
   FEdtSearch.Width := SearchW;
-  FEdtSearch.Left := Max(378, FPnlFilterBar.ClientWidth - SearchW - 8);
+  FEdtSearch.Left := Max(396, FPnlFilterBar.ClientWidth - SearchW - 12);
 end;
 
 procedure TMainForm.StatusBarResize(Sender: TObject);
@@ -1578,9 +1686,9 @@ begin
   if FLstTorrents = nil then Exit;
   SaveSelectedIds;
   if FCompactView then
-    FLstTorrents.ItemHeight := 28
+    FLstTorrents.ItemHeight := 36
   else
-    FLstTorrents.ItemHeight := 68;
+    FLstTorrents.ItemHeight := 80;
   for I := 0 to Min(FLstTorrents.Items.Count, FFilteredTorrents.Count) - 1 do
     FLstTorrents.Items.Objects[I] := {%H-}TObject(PtrUInt(TTorrentItem(FFilteredTorrents[I]).Id));
   RestoreSelectedIds;
@@ -2061,12 +2169,12 @@ begin
   end;
 
   if FSessionStats.DownloadSpeed > 0 then
-    FLblDownSpeed.Caption := 'Down: ' + FormatSpeed(FSessionStats.DownloadSpeed)
+    FLblDownSpeed.Caption := 'DL: ' + FormatSpeed(FSessionStats.DownloadSpeed)
   else
     FLblDownSpeed.Caption := '';
 
   if FSessionStats.UploadSpeed > 0 then
-    FLblUpSpeed.Caption := 'Up: ' + FormatSpeed(FSessionStats.UploadSpeed)
+    FLblUpSpeed.Caption := 'UL: ' + FormatSpeed(FSessionStats.UploadSpeed)
   else
     FLblUpSpeed.Caption := '';
 

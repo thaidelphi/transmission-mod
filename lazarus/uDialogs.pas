@@ -977,6 +977,7 @@ begin
   LKey.Left := 16;
   LKey.Top := Y;
   LKey.Font.Style := [fsBold];
+  LKey.Font.Color := RGBToColor(100, 116, 139);
   LKey.Caption := KeyText;
 
   Result := TLabel.Create(ParentCtrl);
@@ -984,6 +985,7 @@ begin
   Result.Left := 155;
   Result.Top := Y;
   Result.Width := 440;
+  Result.Font.Color := RGBToColor(15, 23, 42);
   Result.Caption := ValText;
 end;
 
@@ -1040,6 +1042,7 @@ begin
   SbAct.Parent := TsAct;
   SbAct.Align := alClient;
   SbAct.BorderStyle := bsNone;
+  SbAct.Color := clWhite;
   LblHaveVal := CreateKeyValLabel(SbAct, 14, 'Have:', '');
   LblDownVal := CreateKeyValLabel(SbAct, 40, 'Downloaded:', '');
   LblUpVal := CreateKeyValLabel(SbAct, 66, 'Uploaded:', '');
@@ -1058,6 +1061,7 @@ begin
   SbInfo.Parent := TsInfo;
   SbInfo.Align := alClient;
   SbInfo.BorderStyle := bsNone;
+  SbInfo.Color := clWhite;
   LblInfoSizeVal := CreateKeyValLabel(SbInfo, 14, 'Total Size:', '');
   LblInfoHashVal := CreateKeyValLabel(SbInfo, 40, 'Hash:', '');
   LblInfoTypeVal := CreateKeyValLabel(SbInfo, 66, 'Type:', '');
@@ -1615,19 +1619,20 @@ begin
     C.Polyline(PtsUp);
   end;
 
-  // Legend overlay at top-left
+  // Legend overlay at top-left (ใช้ TextWidth จริงรองรับทุกสเกล DPI)
   C.Brush.Style := bsSolid;
   C.Brush.Color := RGBToColor(46, 204, 113);
-  C.FillRect(PAD_L + 8, PAD_T + 6, PAD_L + 18, PAD_T + 14);
+  C.FillRect(PAD_L + 10, PAD_T + 7, PAD_L + 20, PAD_T + 15);
   C.Brush.Style := bsClear;
   C.Font.Color := RGBToColor(215, 224, 236);
-  C.TextOut(PAD_L + 22, PAD_T + 3, 'Download');
+  C.TextOut(PAD_L + 25, PAD_T + 3, 'Download');
 
+  XPos := PAD_L + 25 + C.TextWidth('Download') + 18;
   C.Brush.Style := bsSolid;
   C.Brush.Color := RGBToColor(72, 168, 255);
-  C.FillRect(PAD_L + 88, PAD_T + 6, PAD_L + 98, PAD_T + 14);
+  C.FillRect(XPos, PAD_T + 7, XPos + 10, PAD_T + 15);
   C.Brush.Style := bsClear;
-  C.TextOut(PAD_L + 102, PAD_T + 3, 'Upload');
+  C.TextOut(XPos + 15, PAD_T + 3, 'Upload');
 end;
 
 procedure TDetailsPanel.LoadTorrent(ATorrentId: Integer);
@@ -2477,24 +2482,32 @@ var
   C: TCanvas;
   TextStr: string;
   IsSel: Boolean;
+  PillR: TRect;
 begin
   C := LstCategories.Canvas;
   IsSel := odSelected in State;
+  C.Brush.Style := bsSolid;
+  C.Brush.Color := RGBToColor(248, 250, 252);
+  C.FillRect(ARect);
+
   if IsSel then
   begin
-    C.Brush.Color := RGBToColor(14, 98, 196);
+    PillR := Rect(ARect.Left + 6, ARect.Top + 2, ARect.Right - 6, ARect.Bottom - 2);
+    C.Brush.Color := RGBToColor(37, 99, 235);
+    C.Pen.Style := psClear;
+    C.RoundRect(PillR.Left, PillR.Top, PillR.Right, PillR.Bottom, 8, 8);
+    C.Pen.Style := psSolid;
     C.Font.Color := clWhite;
     C.Font.Style := [fsBold];
   end
   else
   begin
-    C.Brush.Color := clWindow;
-    C.Font.Color := clWindowText;
+    C.Font.Color := RGBToColor(51, 65, 85);
     C.Font.Style := [];
   end;
-  C.FillRect(ARect);
+  C.Brush.Style := bsClear;
   TextStr := LstCategories.Items[Index];
-  C.TextOut(ARect.Left + 12, ARect.Top + ((ARect.Bottom - ARect.Top - C.TextHeight('Hg')) div 2), TextStr);
+  C.TextOut(ARect.Left + 16, ARect.Top + ((ARect.Bottom - ARect.Top - C.TextHeight('Hg')) div 2), TextStr);
 end;
 
 procedure TPrefsForm.BtnBrowseSaveDirClick(Sender: TObject);
@@ -2743,18 +2756,23 @@ begin
     F.ClientWidth := 760;
     F.ClientHeight := 520;
 
-    // 1. แถบรายการหมวดหมู่ด้านซ้าย (สไตล์ BitComet)
+    F.Color := clWhite;
+
+    // 1. แถบรายการหมวดหมู่ด้านซ้าย (สไตล์ Modern Slate)
     PnlNav := TPanel.Create(F);
     PnlNav.Parent := F;
     PnlNav.Left := 8; PnlNav.Top := 8; PnlNav.Width := 184; PnlNav.Height := 456;
-    PnlNav.BevelOuter := bvLowered;
+    PnlNav.BevelOuter := bvNone;
+    PnlNav.Color := RGBToColor(226, 232, 240);
+    PnlNav.BorderWidth := 1;
 
     F.LstCategories := TListBox.Create(PnlNav);
     F.LstCategories.Parent := PnlNav;
     F.LstCategories.Align := alClient;
     F.LstCategories.BorderStyle := bsNone;
+    F.LstCategories.Color := RGBToColor(248, 250, 252);
     F.LstCategories.Style := lbOwnerDrawFixed;
-    F.LstCategories.ItemHeight := 28;
+    F.LstCategories.ItemHeight := 32;
     F.LstCategories.OnDrawItem := @F.LstCategoriesDrawItem;
     F.LstCategories.OnClick := @F.LstCategoriesClick;
     F.LstCategories.Items.Add('Connection');
@@ -2766,18 +2784,19 @@ begin
     F.LstCategories.Items.Add('Remote / Web UI');
     F.LstCategories.Items.Add('Appearance & Startup');
 
-    // 2. พื้นที่เนื้อหาด้านขวา + แถบหัวข้อสีน้ำเงินด้านบน (สไตล์ BitComet)
+    // 2. พื้นที่เนื้อหาด้านขวา + แถบหัวข้อด้านบน
     PnlRight := TPanel.Create(F);
     PnlRight.Parent := F;
     PnlRight.Left := 200; PnlRight.Top := 8; PnlRight.Width := 552; PnlRight.Height := 456;
     PnlRight.BevelOuter := bvNone;
+    PnlRight.Color := clWhite;
 
     F.PnlBanner := TPanel.Create(PnlRight);
     F.PnlBanner.Parent := PnlRight;
     F.PnlBanner.Align := alTop;
-    F.PnlBanner.Height := 30;
+    F.PnlBanner.Height := 34;
     F.PnlBanner.BevelOuter := bvNone;
-    F.PnlBanner.Color := RGBToColor(14, 98, 196);
+    F.PnlBanner.Color := RGBToColor(30, 64, 175);
 
     F.LblBanner := TLabel.Create(F.PnlBanner);
     F.LblBanner.Parent := F.PnlBanner;
