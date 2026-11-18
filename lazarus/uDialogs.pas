@@ -1997,11 +1997,14 @@ type
 
     RbCloseExit: TRadioButton;
     RbCloseTray: TRadioButton;
+    ChkAutoStart: TCheckBox;
+    ChkStartMinimized: TCheckBox;
 
     procedure BtnBrowseSaveDirClick(Sender: TObject);
     procedure BtnTestPortClick(Sender: TObject);
     procedure BtnUpdateBlocklistClick(Sender: TObject);
     procedure BtnOpenWebClientClick(Sender: TObject);
+    procedure ChkAutoStartChange(Sender: TObject);
   end;
 
 procedure TPrefsForm.BtnBrowseSaveDirClick(Sender: TObject);
@@ -2047,6 +2050,12 @@ begin
   OpenURL(Format('http://127.0.0.1:%d/', [SpnWebPort.Value]));
 end;
 
+procedure TPrefsForm.ChkAutoStartChange(Sender: TObject);
+begin
+  if ChkStartMinimized <> nil then
+    ChkStartMinimized.Enabled := ChkAutoStart.Checked;
+end;
+
 function ShowPrefsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   WebSrv: TTransmissionWebServer; var Config: TSessionConfig;
   var MinimizeToTray: Boolean): Boolean;
@@ -2057,6 +2066,7 @@ var
   Lbl: TLabel;
   BtnBrowse, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel: TButton;
   Args: TJSONObject;
+  AutoStartOn, AutoStartMin: Boolean;
 begin
   Result := False;
   Rpc.FetchSession(Config);
@@ -2427,37 +2437,59 @@ begin
     if WebSrv <> nil then
       F.EdtWebPass.Text := WebSrv.Password;
 
-    // 7. Desktop / Close Behavior Tab (ตั้งค่าเมื่อกดปุ่มปิดหน้าต่าง X)
+    // 7. Desktop / Startup & Close Behavior Tab (ตั้งค่าเปิดพร้อม Windows และปุ่มปิดหน้าต่าง X)
     TsDesktop := PC.AddTabSheet;
     TsDesktop.Caption := 'Desktop';
 
+    AutoStartOn := GetWindowsAutoStart(AutoStartMin);
+
     Lbl := TLabel.Create(TsDesktop);
     Lbl.Parent := TsDesktop;
-    Lbl.Left := 16; Lbl.Top := 20;
+    Lbl.Left := 16; Lbl.Top := 14;
+    Lbl.Font.Style := [fsBold];
+    Lbl.Caption := 'Windows Startup (เปิดโปรแกรมอัตโนมัติเมื่อเข้าระบบ)';
+
+    F.ChkAutoStart := TCheckBox.Create(TsDesktop);
+    F.ChkAutoStart.Parent := TsDesktop;
+    F.ChkAutoStart.Left := 28; F.ChkAutoStart.Top := 38;
+    F.ChkAutoStart.Caption := 'Start automatically when signing in to Windows (เปิดอัตโนมัติ)';
+    F.ChkAutoStart.Checked := AutoStartOn;
+    F.ChkAutoStart.OnChange := @F.ChkAutoStartChange;
+
+    F.ChkStartMinimized := TCheckBox.Create(TsDesktop);
+    F.ChkStartMinimized.Parent := TsDesktop;
+    F.ChkStartMinimized.Left := 48; F.ChkStartMinimized.Top := 64;
+    F.ChkStartMinimized.Caption := 'Start minimized to system tray (เริ่มแบบย่อไปมุมขวาล่าง)';
+    F.ChkStartMinimized.Checked := AutoStartMin;
+    F.ChkStartMinimized.Enabled := AutoStartOn;
+
+    Lbl := TLabel.Create(TsDesktop);
+    Lbl.Parent := TsDesktop;
+    Lbl.Left := 16; Lbl.Top := 102;
     Lbl.Font.Style := [fsBold];
     Lbl.Caption := 'Window Close Button Behavior (เมื่อกดปุ่มปิด X ของโปรแกรม)';
 
     F.RbCloseExit := TRadioButton.Create(TsDesktop);
     F.RbCloseExit.Parent := TsDesktop;
-    F.RbCloseExit.Left := 28; F.RbCloseExit.Top := 54;
+    F.RbCloseExit.Left := 28; F.RbCloseExit.Top := 128;
     F.RbCloseExit.Caption := 'Exit program immediately (ปิดโปรแกรมทันที)';
     F.RbCloseExit.Checked := not MinimizeToTray;
 
     F.RbCloseTray := TRadioButton.Create(TsDesktop);
     F.RbCloseTray.Parent := TsDesktop;
-    F.RbCloseTray.Left := 28; F.RbCloseTray.Top := 86;
+    F.RbCloseTray.Left := 28; F.RbCloseTray.Top := 156;
     F.RbCloseTray.Caption := 'Minimize to system tray (ย่อไปไว้มุมขวาล่าง)';
     F.RbCloseTray.Checked := MinimizeToTray;
 
     Lbl := TLabel.Create(TsDesktop);
     Lbl.Parent := TsDesktop;
-    Lbl.Left := 28; Lbl.Top := 126; Lbl.Width := 450; Lbl.Height := 80;
+    Lbl.Left := 28; Lbl.Top := 192; Lbl.Width := 460; Lbl.Height := 72;
     Lbl.AutoSize := False;
     Lbl.WordWrap := True;
     Lbl.Font.Color := clGrayText;
     Lbl.Caption :=
-      'คำแนะนำ: หากเลือก "Minimize to system tray" การกดปุ่มปิด (X) จะซ่อนหน้าต่างลงไปอยู่ที่ไอคอนมุมขวาล่างของทาสก์บาร์ ' +
-      'โดยโปรแกรมจะยังทำงานต่อเบื้องหลัง สามารถดับเบิลคลิกที่ไอคอนเพื่อเปิดหน้าต่างกลับมา หรือคลิกขวาแล้วเลือก Quit (หรือเมนู File -> Quit) เพื่อปิดโปรแกรมถาวร';
+      'คำแนะนำ: การเปิดอัตโนมัติจะบันทึกไว้ใน Windows Registry (HKCU\...\Run) ของผู้ใช้ปัจจุบัน ' +
+      'และหากเลือก "Minimize to system tray" การกดปุ่มปิด (X) จะซ่อนหน้าต่างลงไปที่มุมขวาล่างโดยไม่ปิดโปรแกรม';
 
     BtnOK := TButton.Create(F);
     BtnOK.Parent := F;
@@ -2476,6 +2508,7 @@ begin
     if F.ShowModal = mrOk then
     begin
       MinimizeToTray := F.RbCloseTray.Checked;
+      SetWindowsAutoStart(F.ChkAutoStart.Checked, F.ChkStartMinimized.Checked);
       Args := TJSONObject.Create;
       Args.Add('speed-limit-up-enabled', F.ChkUpLimit.Checked);
       Args.Add('speed-limit-up', F.SpnUpLimit.Value);

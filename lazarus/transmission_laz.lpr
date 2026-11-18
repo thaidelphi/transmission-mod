@@ -18,7 +18,7 @@ uses
   athreads,
   {$ENDIF}
   Interfaces, // โหลด LCL Widgetset สำหรับแพลตฟอร์มปัจจุบัน (Win32/Win64 GDI)
-  Forms, uMain;
+  Forms, uMain, uTypes;
 
 {$R *.res}
 
@@ -37,6 +37,13 @@ begin
 
   // สร้างอินสแตนซ์หน้าต่างหลักของโปรแกรม (TMainForm จากยูนิต uMain)
   Application.CreateForm(TMainForm, MainForm);
+
+  // หากเปิดด้วยพารามิเตอร์ --minimized (เช่น จาก Auto-start ของ Windows) ให้ซ่อนหน้าต่างลง System Tray ทันที
+  if HasCliFlag('--minimized') then
+  begin
+    Application.ShowMainForm := False;
+    MainForm.Visible := False;
+  end;
 
   // เข้าสู่ Event Loop หลักของโปรแกรมจนกว่าผู้ใช้จะสั่งปิดโปรแกรม
   Application.Run;

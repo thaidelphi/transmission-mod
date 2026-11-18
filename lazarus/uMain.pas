@@ -221,6 +221,7 @@ type
     procedure ActStatsPopupClick(Sender: TObject);
     procedure ActToggleMainWindow(Sender: TObject);
     procedure ActToggleMinimizeToTray(Sender: TObject);
+    procedure ActToggleAutoStart(Sender: TObject);
     procedure ActQuit(Sender: TObject);
   public
   end;
@@ -639,6 +640,7 @@ begin
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Statistics...'; PItem.OnClick := @ActShowStatistics; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Block All Tracker Packets'; PItem.OnClick := @ActToggleGlobalTrackerPause; FOptionsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Start with Windows'; PItem.OnClick := @ActToggleAutoStart; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Minimize to Tray on Close'; PItem.OnClick := @ActToggleMinimizeToTray; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Compact View'; PItem.OnClick := @ActToggleCompactView; FOptionsPopup.Items.Add(PItem);
 end;
@@ -2599,11 +2601,15 @@ procedure TMainForm.ActOptionsPopupClick(Sender: TObject);
 var
   P: TPoint;
   I: Integer;
+  AutoStartOn, DummyMin: Boolean;
 begin
+  AutoStartOn := GetWindowsAutoStart(DummyMin);
   for I := 0 to FOptionsPopup.Items.Count - 1 do
   begin
     if Pos('Compact View', FOptionsPopup.Items[I].Caption) > 0 then
       FOptionsPopup.Items[I].Checked := FCompactView
+    else if Pos('Start with Windows', FOptionsPopup.Items[I].Caption) > 0 then
+      FOptionsPopup.Items[I].Checked := AutoStartOn
     else if Pos('Minimize to Tray', FOptionsPopup.Items[I].Caption) > 0 then
       FOptionsPopup.Items[I].Checked := FMinimizeToTray
     else if Pos('Block All Tracker', FOptionsPopup.Items[I].Caption) > 0 then
@@ -2668,6 +2674,14 @@ procedure TMainForm.ActToggleMinimizeToTray(Sender: TObject);
 begin
   FMinimizeToTray := not FMinimizeToTray;
   SaveAppSettings;
+end;
+
+procedure TMainForm.ActToggleAutoStart(Sender: TObject);
+var
+  CurOn, CurMin: Boolean;
+begin
+  CurOn := GetWindowsAutoStart(CurMin);
+  SetWindowsAutoStart(not CurOn, CurMin);
 end;
 
 procedure TMainForm.ActQuit(Sender: TObject);

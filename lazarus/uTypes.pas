@@ -12,7 +12,7 @@ unit uTypes;
 interface
 
 uses
-  Classes, SysUtils, Math;
+  Classes, SysUtils, Math{$IFDEF WINDOWS}, Registry, Windows{$ENDIF};
 
 const
   { ค่าคงที่สถานะของทอร์เรนต์ (ตรงกับ enum tr_torrent_activity ใน libtransmission) }
@@ -218,6 +218,9 @@ function FormatETA(Seconds: Int64): string;
 function FormatDuration(Seconds: Int64): string;
 function FormatPercent(Frac: Double): string;
 function ExtractTrackerHost(const AnnounceUrl: string): string;
+function HasCliFlag(const Flag: string): Boolean;
+function GetWindowsAutoStart(out StartMinimized: Boolean): Boolean;
+function SetWindowsAutoStart(Enabled, StartMinimized: Boolean): Boolean;
 
 implementation
 
@@ -508,5 +511,82 @@ begin
         [FormatSize(TotalSize), FormatSize(UploadedEver), FormatRatio(UploadRatio)]);
   end;
 end;
+
+function HasCliFlag(const Flag: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if SameText(ParamStr(I), Flag) then
+      Exit(True);
+end;
+
+function GetWindowsAutoStart(out StartMinimized: Boolean): Boolean;
+{$IFDEF WINDOWS}
+const
+  RUN_KEY = '\Software\Microsoft\Windows\CurrentVersion\Run';
+  VAL_NAME = 'Transmission';
+var
+  Reg: TRegistry;
+  Cmd: string;
+begin
+  Result := False;
+  StartMinimized := False;
+  Reg := TRegistry.Create(KEY_READ);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    if Reg.OpenKeyReadOnly(RUN_KEY) and Reg.ValueExists(VAL_NAME) then
+    begin
+      Cmd := Trim(Reg.ReadString(VAL_NAME));
+      Result := Cmd <> '';
+      StartMinimized := Pos('--minimized', LowerCase(Cmd)) > 0;
+    end;
+  finally
+    Reg.Free;
+  end;
+end;
+{$ELSE}
+begin
+  StartMinimized := False;
+  Result := False;
+end;
+{$ENDIF}
+
+function SetWindowsAutoStart(Enabled, StartMinimized: Boolean): Boolean;
+{$IFDEF WINDOWS}
+const
+  RUN_KEY = '\Software\Microsoft\Windows\CurrentVersion\Run';
+  VAL_NAME = 'Transmission';
+var
+  Reg: TRegistry;
+  Cmd: string;
+begin
+  Result := False;
+  Reg := TRegistry.Create(KEY_READ or KEY_WRITE);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    if Reg.OpenKey(RUN_KEY, True) then
+    begin
+      if Enabled then
+      begin
+        Cmd := '"' + ParamStr(0) + '"';
+        if StartMinimized then
+          Cmd := Cmd + ' --minimized';
+        Reg.WriteString(VAL_NAME, Cmd);
+      end
+      else if Reg.ValueExists(VAL_NAME) then
+        Reg.DeleteValue(VAL_NAME);
+      Result := True;
+    end;
+  finally
+    Reg.Free;
+  end;
+end;
+{$ELSE}
+begin
+  Result := False;
+end;
+{$ENDIF}
 
 end.
