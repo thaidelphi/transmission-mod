@@ -88,6 +88,8 @@ begin
   FServer := TFPHTTPServer.Create(nil);
   FServer.Port := APort;
   FServer.Threaded := True;
+  // กำหนด AcceptIdleTimeout เพื่อไม่ให้ socket accept() ค้างถาวรและสามารถปิดโปรแกรมได้ทันที
+  FServer.AcceptIdleTimeout := 100;
   FServer.OnRequest := AHandler;
   Start;
 end;
@@ -101,6 +103,7 @@ end;
 
 procedure TWebServerThread.Execute;
 begin
+  if Terminated then Exit;
   FRunning := True;
   FLastError := '';
   try
@@ -114,6 +117,7 @@ end;
 
 procedure TWebServerThread.StopHttp;
 begin
+  Terminate;
   if (FServer <> nil) and FServer.Active then
   begin
     try

@@ -425,6 +425,8 @@ procedure TMainForm.FormDestroy(Sender: TObject);
 begin
   if FTimerRefresh <> nil then
     FTimerRefresh.Enabled := False;
+  if FTrayIcon <> nil then
+    FTrayIcon.Visible := False;
   SaveAppSettings;
   ClearAllTorrents;
   FKnownFinishedIds.Free;
