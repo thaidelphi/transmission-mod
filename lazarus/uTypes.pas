@@ -12,7 +12,7 @@ unit uTypes;
 interface
 
 uses
-  Classes, SysUtils, Math, fpjson, jsonparser, base64{$IFDEF WINDOWS}, Registry, Windows{$ENDIF};
+  Classes, SysUtils, Math, fpjson, jsonparser, base64, zstream{$IFDEF WINDOWS}, Registry, Windows{$ENDIF};
 
 const
   { ค่าคงที่สถานะของทอร์เรนต์ (ตรงกับ enum tr_torrent_activity ใน libtransmission) }
@@ -280,6 +280,8 @@ function SetTorrentFileAssociation(Enabled: Boolean): Boolean;
 function GetMagnetProtocolAssociation: Boolean;
 function SetMagnetProtocolAssociation(Enabled: Boolean): Boolean;
 function GetDefaultPortableDataDir: string;
+function GetEmbeddedBinDir(const PreferredDataDir: string): string;
+function EnsureEmbeddedAsset(const ResName, TargetFilePath: string): Boolean;
 function ExportPortableBackup(const DestFilePath, DataDir, IniPath: string;
   History: TDownloadHistoryManager): Boolean;
 function ImportPortableBackup(const SrcFilePath, DataDir: string;
@@ -1527,6 +1529,130 @@ end;
 begin
 end;
 {$ENDIF}
+
+function GetEmbeddedBinDir(const PreferredDataDir: string): string;
+var
+  BaseDir, FallbackDir, TestFile: string;
+  FS: TFileStream;
+begin
+  BaseDir := Trim(PreferredDataDir);
+  if BaseDir = '' then
+    BaseDir := GetDefaultPortableDataDir;
+  Result := IncludeTrailingPathDelimiter(BaseDir) + 'bin';
+  if ForceDirectories(Result) then
+  begin
+    TestFile := IncludeTrailingPathDelimiter(Result) + '.write_chk';
+    try
+      FS := TFileStream.Create(TestFile, fmCreate);
+      FS.Free;
+      SysUtils.DeleteFile(TestFile);
+      Exit;
+    except
+    end;
+  end;
+
+  FallbackDir := Trim(SysUtils.GetEnvironmentVariable('LOCALAPPDATA'));
+  if FallbackDir = '' then
+    FallbackDir := GetTempDir(False);
+  Result := IncludeTrailingPathDelimiter(FallbackDir) + 'TransmissionLaz' + PathDelim + 'bin';
+  ForceDirectories(Result);
+end;
+
+function ComputeStreamFnv1aHex(S: TStream): string;
+var
+  Buf: array[0..8191] of Byte;
+  N, I: Integer;
+  H: QWord;
+begin
+  S.Position := 0;
+  H := QWord($CBF29CE484222325);
+  repeat
+    N := S.Read(Buf[0], SizeOf(Buf));
+    for I := 0 to N - 1 do
+    begin
+      H := H xor Buf[I];
+      H := H * QWord($100000001B3);
+    end;
+  until N = 0;
+  S.Position := 0;
+  Result := IntToHex(H, 16) + '_' + IntToStr(S.Size);
+end;
+
+function EnsureEmbeddedAsset(const ResName, TargetFilePath: string): Boolean;
+var
+  ResStr: TResourceStream;
+  Decomp: TDecompressionStream;
+  OutStr: TFileStream;
+  TmpPath, SigPath, ExpectedSig, CurSig: string;
+  Buf: array[0..65535] of Byte;
+  N: Integer;
+  SL: TStringList;
+begin
+  Result := False;
+  {$IFDEF WINDOWS}
+  if FindResourceW(HInstance, PWideChar(UnicodeString(ResName)), PWideChar(PtrUInt(10))) = 0 then
+    Exit(False);
+  {$ENDIF}
+
+  try
+    ResStr := TResourceStream.Create(HInstance, ResName, PChar(PtrUInt(10)));
+  except
+    Exit(False);
+  end;
+  try
+    ExpectedSig := ComputeStreamFnv1aHex(ResStr);
+    SigPath := TargetFilePath + '.sig';
+    if FileExists(TargetFilePath) and FileExists(SigPath) then
+    begin
+      SL := TStringList.Create;
+      try
+        SL.LoadFromFile(SigPath);
+        if SL.Count > 0 then CurSig := Trim(SL[0]) else CurSig := '';
+      finally
+        SL.Free;
+      end;
+      if CurSig = ExpectedSig then
+        Exit(True);
+    end;
+
+    ForceDirectories(ExtractFileDir(TargetFilePath));
+    TmpPath := TargetFilePath + '.tmp';
+    Decomp := TDecompressionStream.Create(ResStr, False);
+    try
+      OutStr := TFileStream.Create(TmpPath, fmCreate);
+      try
+        repeat
+          N := Decomp.Read(Buf[0], SizeOf(Buf));
+          if N > 0 then
+            OutStr.WriteBuffer(Buf[0], N);
+        until N = 0;
+      finally
+        OutStr.Free;
+      end;
+    finally
+      Decomp.Free;
+    end;
+
+    if FileExists(TargetFilePath) then
+      SysUtils.DeleteFile(TargetFilePath);
+    if not RenameFile(TmpPath, TargetFilePath) then
+    begin
+      SysUtils.DeleteFile(TmpPath);
+      Exit(FileExists(TargetFilePath));
+    end;
+
+    SL := TStringList.Create;
+    try
+      SL.Text := ExpectedSig;
+      SL.SaveToFile(SigPath);
+    finally
+      SL.Free;
+    end;
+    Result := FileExists(TargetFilePath);
+  finally
+    ResStr.Free;
+  end;
+end;
 
 finalization
   UnregisterSingleInstanceWindow;

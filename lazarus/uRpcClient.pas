@@ -215,15 +215,19 @@ begin
   Result := Format('http://%s:%d%s', [FHost, FPort, FUrlPath]);
 end;
 
-{ ค้นหาตำแหน่งไฟล์ transmission-daemon.exe จากโฟลเดอร์ปัจจุบันหรือโฟลเดอร์ build/daemon/ }
+{ ค้นหาตำแหน่งไฟล์ transmission-daemon.exe จากโฟลเดอร์ปัจจุบัน, ไฟล์ฝังใน EXE, หรือโฟลเดอร์ build/daemon/ }
 function TTransmissionRpcClient.FindDaemonExecutable: string;
 var
-  AppDir, Candidate: string;
+  AppDir, Candidate, BinDir: string;
 begin
   AppDir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
 
   Candidate := AppDir + 'transmission-daemon.exe';
   if FileExists(Candidate) then Exit(Candidate);
+
+  BinDir := GetEmbeddedBinDir(FDataDir);
+  Candidate := IncludeTrailingPathDelimiter(BinDir) + 'transmission-daemon.exe';
+  if EnsureEmbeddedAsset('TR_DAEMON_Z', Candidate) then Exit(Candidate);
 
   Candidate := ExpandFileName(AppDir + '..\build\daemon\transmission-daemon.exe');
   if FileExists(Candidate) then Exit(Candidate);
@@ -1275,6 +1279,12 @@ begin
   AppDir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
 
   CreateExe := AppDir + 'transmission-create.exe';
+  if not FileExists(CreateExe) then
+  begin
+    CreateExe := IncludeTrailingPathDelimiter(GetEmbeddedBinDir(FDataDir)) + 'transmission-create.exe';
+    if not EnsureEmbeddedAsset('TR_CREATE_Z', CreateExe) then
+      CreateExe := '';
+  end;
   if not FileExists(CreateExe) then
     CreateExe := ExpandFileName(AppDir + '..\build\utils\transmission-create.exe');
   if not FileExists(CreateExe) then

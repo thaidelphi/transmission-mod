@@ -21,6 +21,7 @@ uses
   Forms, uMain, uTypes;
 
 {$R *.res}
+{$R embedded_assets.res}
 
 begin
   // ป้องกันการเปิดโปรแกรมซ้ำซ้อนมากกว่า 1 ตัว (Single Instance)

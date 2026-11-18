@@ -37,9 +37,12 @@ compile_commands.json
 CMakeUserPresets.json
 
 # Lazarus build outputs
+/build-static/
 /lazarus/lib/
 /lazarus/backup/
 /lazarus/data/
+/lazarus/embedded/
+/lazarus/embedded_assets.rc
 /lazarus/*.ini
 /lazarus/*.exe
 /lazarus/*.res

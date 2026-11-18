@@ -19,7 +19,7 @@ unit uWebServer;
 interface
 
 uses
-  Classes, SysUtils, fphttpserver, base64, uRpcClient;
+  Classes, SysUtils, fphttpserver, base64, uTypes, uRpcClient;
 
 type
   TWebServerThread = class;
@@ -206,6 +206,12 @@ begin
 
   Candidate := AppDir + 'web_ui\index.html';
   if FileExists(Candidate) then Exit(Candidate);
+
+  if FRpc <> nil then
+    Candidate := IncludeTrailingPathDelimiter(GetEmbeddedBinDir(FRpc.DataDir)) + 'index.html'
+  else
+    Candidate := IncludeTrailingPathDelimiter(GetEmbeddedBinDir('')) + 'index.html';
+  if EnsureEmbeddedAsset('TR_WEBUI_Z', Candidate) then Exit(Candidate);
 
   Candidate := ExpandFileName(AppDir + '..\lazarus\web_ui\index.html');
   if FileExists(Candidate) then Exit(Candidate);
