@@ -179,6 +179,12 @@ public:
             return TR_ERROR_EINVAL;
         }
 
+        if (tor->session != nullptr)
+        {
+            tor->session->flushDiskCache(id);
+            tor->session->diskCache().invalidate_torrent(id);
+        }
+
         auto error = tr_error{};
         if (tor->files().move(old_parent, parent, parent_name, &error))
         {
@@ -194,6 +200,11 @@ public:
         if (tor == nullptr)
         {
             return TR_ERROR_EINVAL;
+        }
+
+        if (tor->session != nullptr)
+        {
+            tor->session->diskCache().invalidate_torrent(id);
         }
 
         if (!remove_func)

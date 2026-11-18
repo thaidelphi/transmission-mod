@@ -232,9 +232,7 @@ std::optional<tr_sha1_digest_t> recalculate_hash(tr_torrent const& tor, tr_piece
     return sha.finish();
 }
 
-} // namespace
-
-tr_error_code_t tr_ioRead(
+tr_error_code_t raw_ioRead(
     tr_torrent const& tor,
     tr_open_files& open_files,
     tr_block_info::Location const& loc,
@@ -262,7 +260,38 @@ tr_error_code_t tr_ioRead(
     return error.code();
 }
 
-tr_error_code_t tr_ioWrite(
+} // namespace
+
+tr_error_code_t tr_ioRead(
+    tr_torrent const& tor,
+    tr_open_files& open_files,
+    tr_block_info::Location const& loc,
+    std::span<uint8_t> const setme)
+{
+    if (loc.piece >= tor.piece_count())
+    {
+        return EINVAL;
+    }
+
+    if (tor.session != nullptr && tor.session->diskCache().read(tor.id(), loc.byte, setme))
+    {
+        return 0;
+    }
+
+    auto const err = raw_ioRead(tor, open_files, loc, setme);
+    if (err == 0 && tor.session != nullptr && tor.session->diskCache().capacity_bytes() > 0U)
+    {
+        auto evicted = std::vector<tr_disk_cache::Entry>{};
+        tor.session->diskCache().put_clean(tor.id(), loc.byte, setme, evicted);
+        if (!std::empty(evicted))
+        {
+            (void)tor.session->writeDiskCacheEntries(evicted, tor.id());
+        }
+    }
+    return err;
+}
+
+tr_error_code_t tr_ioWriteRaw(
     tr_torrent& tor,
     tr_open_files& open_files,
     tr_block_info::Location const& loc,
@@ -296,6 +325,31 @@ tr_error_code_t tr_ioWrite(
     }
 
     return error.code();
+}
+
+tr_error_code_t tr_ioWrite(
+    tr_torrent& tor,
+    tr_open_files& open_files,
+    tr_block_info::Location const& loc,
+    std::span<uint8_t const> const writeme)
+{
+    if (loc.piece >= tor.piece_count())
+    {
+        return EINVAL;
+    }
+
+    if (tor.session != nullptr && tor.session->diskCache().capacity_bytes() > 0U)
+    {
+        auto evicted = std::vector<tr_disk_cache::Entry>{};
+        tor.session->diskCache().put_dirty(tor.id(), loc.byte, writeme, evicted);
+        if (!std::empty(evicted))
+        {
+            return tor.session->writeDiskCacheEntries(evicted, tor.id());
+        }
+        return 0;
+    }
+
+    return tr_ioWriteRaw(tor, open_files, loc, writeme);
 }
 
 bool tr_ioTestPiece(tr_torrent const& tor, tr_piece_index_t const piece)

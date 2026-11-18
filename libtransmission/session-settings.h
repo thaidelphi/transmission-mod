@@ -103,6 +103,7 @@ public:
     bool should_start_added_torrents = true;
     bool speed_limit_down_enabled = false;
     bool speed_limit_up_enabled = false;
+    bool tracker_auto_pause = false;
     bool tracker_paused = false;
     bool tcp_enabled = true;
     bool torrent_complete_verify_enabled = false;
@@ -215,6 +216,7 @@ public:
         Field<&SessionSettings::tcp_enabled>{ TR_KEY_tcp_enabled },
         Field<&SessionSettings::torrent_added_verify_mode>{ TR_KEY_torrent_added_verify_mode },
         Field<&SessionSettings::torrent_complete_verify_enabled>{ TR_KEY_torrent_complete_verify_enabled },
+        Field<&SessionSettings::tracker_auto_pause>{ TR_KEY_tracker_auto_pause },
         Field<&SessionSettings::tracker_paused>{ TR_KEY_tracker_paused },
         Field<&SessionSettings::should_delete_source_torrents>{ TR_KEY_trash_original_torrent_files },
         Field<&SessionSettings::umask>{ TR_KEY_umask },

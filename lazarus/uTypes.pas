@@ -124,6 +124,7 @@ type
     PrimaryTrackerHost: string;       // ชื่อโดเมนของ Tracker ตัวแรก (ใช้สำหรับตัวกรอง Tracker)
     MagnetLink: string;               // ลิงก์ Magnet (`magnet:?xt=urn:btih:...`)
     TrackerPaused: Boolean;           // ปิดการส่ง Packet ไปหา Tracker เฉพาะทอร์เรนต์นี้หรือไม่
+    TrackerAutoPause: Boolean;        // ดึง Peer รอบแรกแล้วหยุดส่ง Packet Tracker อัตโนมัติหรือไม่
     Selected: Boolean;                // สถานะการถูกคลิกเลือกในตาราง UI
 
     Files: array of TTorrentFileItem;       // รายการไฟล์ย่อย (โหลดเมื่อเปิดหน้าต่าง Properties)
@@ -189,6 +190,8 @@ type
     SeedQueueEnabled: Boolean;          // เปิดจำกัดจำนวนคิวปล่อยไฟล์พร้อมกันหรือไม่
     SeedQueueSize: Integer;             // จำนวนทอร์เรนต์ที่ปล่อยไฟล์พร้อมกันได้สูงสุด
     TrackerPaused: Boolean;             // ปิดการส่ง Packet ไปหา Tracker ทั้งโปรแกรมหรือไม่
+    TrackerAutoPause: Boolean;          // ดึง Peer รอบแรกแล้วหยุดส่ง Packet Tracker อัตโนมัติ (ทั้งโปรแกรม)
+    CacheSizeMiB: Integer;              // ขนาด RAM Cache สำหรับเขียน/อ่านดิสก์ (MiB)
   end;
 
   { การตั้งค่าพฤติกรรมฝั่งเดสก์ท็อป (บันทึกลง INI คล้ายตัวเลือกของ BitComet) }
@@ -197,6 +200,9 @@ type
     PreventSleepWhenActive: Boolean; // ป้องกัน Windows เข้าโหมดหลับขณะกำลังดาวน์โหลด/ปล่อยไฟล์
     PlaySoundOnFinish: Boolean;      // เล่นเสียงแจ้งเตือนเมื่อดาวน์โหลดเสร็จ
     ShowNotifyOnFinish: Boolean;     // แสดงแถบแจ้งเตือนมุมขวาล่างเมื่อดาวน์โหลดเสร็จ
+    WatchDirEnabled: Boolean;        // เปิดใช้งาน Watch Folder ดูไฟล์ .torrent อัตโนมัติ
+    WatchDir: string;                // พาธของ Watch Folder
+    WatchDirDeleteOriginal: Boolean; // ลบไฟล์ .torrent ต้นฉบับหลังแอด (False = เปลี่ยนเป็น .added)
   end;
 
   { โครงสร้างเก็บข้อมูลสถิติของโปรแกรม (ตรงกับผลลัพธ์ของคำสั่ง RPC `session-stats`) }

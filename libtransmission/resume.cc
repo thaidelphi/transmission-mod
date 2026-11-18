@@ -801,6 +801,15 @@ tr_resume::fields_t load_from_file(tr_torrent* tor, tr_torrent::ResumeHelper& he
         }
     }
 
+    if ((fields_to_load & tr_resume::TrackerAutoPause) != 0)
+    {
+        if (auto b = map.value_if<bool>(TR_KEY_tracker_auto_pause); b)
+        {
+            tor->set_tracker_auto_pause(*b);
+            fields_loaded |= tr_resume::TrackerAutoPause;
+        }
+    }
+
     if ((fields_to_load & tr_resume::Peers) != 0)
     {
         fields_loaded |= load_peers(map, tor);
@@ -986,6 +995,7 @@ void save(tr_torrent* const tor, tr_torrent::ResumeHelper const& helper)
     map.try_emplace(TR_KEY_sequential_download, tor->is_sequential_download());
     map.try_emplace(TR_KEY_sequential_download_from_piece, tor->sequential_download_from_piece());
     map.try_emplace(TR_KEY_tracker_paused, tor->is_tracker_paused());
+    map.try_emplace(TR_KEY_tracker_auto_pause, tor->is_tracker_auto_pause());
     save_peers(map, tor);
 
     if (tor->has_metainfo())

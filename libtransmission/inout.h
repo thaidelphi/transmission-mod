@@ -39,6 +39,12 @@ struct tr_torrent;
     tr_block_info::Location const& loc,
     std::span<uint8_t const> writeme);
 
+[[nodiscard]] tr_error_code_t tr_ioWriteRaw(
+    tr_torrent& tor,
+    tr_open_files& open_files,
+    tr_block_info::Location const& loc,
+    std::span<uint8_t const> writeme);
+
 /**
  * @brief Test to see if the piece matches its metainfo's SHA1 checksum.
  */

@@ -81,6 +81,7 @@ type
     function QueueMove(const Ids: array of Integer; const DirectionMethod: string): Boolean;
     function SetTorrentOptions(TorrentId: Integer; Args: TJSONObject): Boolean;
     function SetTorrentsTrackerPaused(const Ids: array of Integer; Paused: Boolean): Boolean;
+    function SetTorrentsTrackerAutoPause(const Ids: array of Integer; AutoPause: Boolean): Boolean;
 
     { คำสั่งเครือข่าย พื้นที่ว่าง และการสร้างไฟล์ .torrent }
     function TestPeerPort(out IsOpen: Boolean): Boolean;
@@ -488,6 +489,8 @@ begin
     Config.SeedQueueEnabled := JsonGetBool(Args, 'seed-queue-enabled', False);
     Config.SeedQueueSize := JsonGetInt(Args, 'seed-queue-size', 10);
     Config.TrackerPaused := JsonGetBool(Args, 'tracker_paused', False);
+    Config.TrackerAutoPause := JsonGetBool(Args, 'tracker_auto_pause', False);
+    Config.CacheSizeMiB := JsonGetInt(Args, 'cache_size_mib', JsonGetInt(Args, 'cache-size-mb', 4));
   finally
     Resp.Free;
   end;
@@ -547,7 +550,7 @@ end;
 { ดึงรายการทอร์เรนต์ทั้งหมดสำหรับแสดงผลในหน้าต่างหลักด้วยคำสั่ง `torrent-get` }
 function TTransmissionRpcClient.FetchTorrents(List: TList): Boolean;
 const
-  FieldNames: array[0..34] of string = (
+  FieldNames: array[0..35] of string = (
     'id', 'name', 'hashString', 'status', 'percentDone',
     'metadataPercentComplete', 'totalSize', 'sizeWhenDone', 'leftUntilDone',
     'haveValid', 'haveUnchecked', 'rateDownload', 'rateUpload', 'uploadRatio',
@@ -555,7 +558,7 @@ const
     'peersSendingToUs', 'peersGettingFromUs', 'error', 'errorString',
     'addedDate', 'doneDate', 'activityDate', 'downloadDir', 'isPrivate',
     'isFinished', 'queuePosition', 'bandwidthPriority', 'seedRatioMode',
-    'seedRatioLimit', 'magnetLink', 'tracker_paused', 'trackerStats'
+    'seedRatioLimit', 'magnetLink', 'tracker_paused', 'tracker_auto_pause', 'trackerStats'
   );
 var
   Args, Resp, RespArgs, TorObj, TrkObj: TJSONObject;
@@ -617,6 +620,7 @@ begin
       Item.SeedRatioLimit := JsonGetFloat(TorObj, 'seedRatioLimit', 2.0);
       Item.MagnetLink := JsonGetStr(TorObj, 'magnetLink', '');
       Item.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', False);
+      Item.TrackerAutoPause := JsonGetBool(TorObj, 'tracker_auto_pause', False);
 
       TrkArr := TorObj.Find('trackerStats') as TJSONArray;
       if (TrkArr <> nil) and (TrkArr.Count > 0) then
@@ -653,7 +657,7 @@ end;
 { ดึงข้อมูลเชิงลึกของทอร์เรนต์เฉพาะตัว (Files, Peers, Trackers, Options) สำหรับหน้าต่าง Properties }
 function TTransmissionRpcClient.FetchTorrentDetails(Torrent: TTorrentItem): Boolean;
 const
-  DetailFields: array[0..42] of string = (
+  DetailFields: array[0..43] of string = (
     'id', 'name', 'hashString', 'status', 'percentDone', 'sizeWhenDone', 'totalSize',
     'haveValid', 'haveUnchecked', 'downloadedEver', 'uploadedEver',
     'rateDownload', 'rateUpload', 'uploadRatio', 'eta', 'activityDate',
@@ -662,7 +666,7 @@ const
     'secondsDownloading', 'secondsSeeding', 'honorsSessionLimits',
     'downloadLimited', 'downloadLimit', 'uploadLimited', 'uploadLimit',
     'seedRatioMode', 'seedRatioLimit', 'seedIdleMode', 'seedIdleLimit',
-    'peer-limit', 'tracker_paused', 'files', 'fileStats', 'peers', 'trackerStats',
+    'peer-limit', 'tracker_paused', 'tracker_auto_pause', 'files', 'fileStats', 'peers', 'trackerStats',
     'magnetLink'
   );
 var
@@ -730,6 +734,7 @@ begin
     Torrent.SeedIdleLimit := JsonGetInt(TorObj, 'seedIdleLimit', 30);
     Torrent.PeerLimit := JsonGetInt(TorObj, 'peer-limit', 50);
     Torrent.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', False);
+    Torrent.TrackerAutoPause := JsonGetBool(TorObj, 'tracker_auto_pause', False);
     Torrent.MagnetLink := JsonGetStr(TorObj, 'magnetLink', Torrent.MagnetLink);
 
     FilesArr := TorObj.Find('files') as TJSONArray;
@@ -1026,6 +1031,17 @@ var
 begin
   Args := BuildIdsArg(Ids);
   Args.Add('tracker_paused', Paused);
+  Result := SendRpcRequest('torrent-set', Args, Resp);
+  Resp.Free;
+end;
+
+function TTransmissionRpcClient.SetTorrentsTrackerAutoPause(const Ids: array of Integer;
+  AutoPause: Boolean): Boolean;
+var
+  Args, Resp: TJSONObject;
+begin
+  Args := BuildIdsArg(Ids);
+  Args.Add('tracker_auto_pause', AutoPause);
   Result := SendRpcRequest('torrent-set', Args, Resp);
   Resp.Free;
 end;

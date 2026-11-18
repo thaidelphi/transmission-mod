@@ -45,6 +45,7 @@ auto inline constexpr Group = fields_t{ 1 << 23 };
 auto inline constexpr SequentialDownload = fields_t{ 1 << 24 };
 auto inline constexpr SequentialDownloadFromPiece = fields_t{ 1 << 25 };
 auto inline constexpr TrackerPaused = fields_t{ 1ULL << 26 };
+auto inline constexpr TrackerAutoPause = fields_t{ 1ULL << 27 };
 
 auto inline constexpr All = ~fields_t{ 0 };
 

@@ -781,6 +781,7 @@ namespace make_torrent_field_helpers
     case TR_KEY_torrent_file:
     case TR_KEY_total_size:
     case TR_KEY_tracker_list:
+    case TR_KEY_tracker_auto_pause:
     case TR_KEY_tracker_paused:
     case TR_KEY_tracker_stats:
     case TR_KEY_trackers:
@@ -949,6 +950,8 @@ namespace make_torrent_field_helpers
         return tor.total_size();
     case TR_KEY_tracker_list:
         return tor.announce_list().to_string();
+    case TR_KEY_tracker_auto_pause:
+        return tor.is_tracker_auto_pause();
     case TR_KEY_tracker_paused:
         return tor.is_tracker_paused();
     case TR_KEY_tracker_stats:
@@ -1359,6 +1362,11 @@ namespace make_torrent_field_helpers
         if (auto const val = args_in.value_if<bool>(TR_KEY_honors_session_limits); val)
         {
             tr_torrentUseSessionLimits(tor, *val);
+        }
+
+        if (auto const val = args_in.value_if<bool>(TR_KEY_tracker_auto_pause); val)
+        {
+            tor->set_tracker_auto_pause(*val);
         }
 
         if (auto const val = args_in.value_if<bool>(TR_KEY_tracker_paused); val)
@@ -2628,6 +2636,17 @@ using SessionAccessors = std::pair<SessionGetter, SessionSetter>;
         });
 
     map.try_emplace(TR_KEY_tcp_enabled, [](tr_session const& src) -> tr_variant { return src.allowsTCP(); }, nullptr);
+
+    map.try_emplace(
+        TR_KEY_tracker_auto_pause,
+        [](tr_session const& src) -> tr_variant { return src.isTrackerAutoPause(); },
+        [](tr_session& tgt, tr_variant const& src, ErrorInfo& /*err*/)
+        {
+            if (auto const val = src.value_if<bool>())
+            {
+                tgt.setTrackerAutoPause(*val);
+            }
+        });
 
     map.try_emplace(
         TR_KEY_tracker_paused,

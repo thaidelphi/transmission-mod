@@ -58,6 +58,8 @@ target_sources(${TR_NAME}
         crypto-utils-wolfssl.cc
         crypto-utils.cc
         crypto-utils.h
+        disk-cache.cc
+        disk-cache.h
         error-types.h
         error.cc
         error.h

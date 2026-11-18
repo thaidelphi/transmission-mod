@@ -43,6 +43,7 @@
 #include "libtransmission/bandwidth.h"
 #include "libtransmission/blocklist.h"
 #include "libtransmission/config-dir-lock.h"
+#include "libtransmission/disk-cache.h"
 #include "libtransmission/interned-string.h"
 #include "libtransmission/ip-cache.h"
 #include "libtransmission/local-data.h"
@@ -875,6 +876,16 @@ public:
         settings_.tracker_paused = paused;
     }
 
+    [[nodiscard]] constexpr bool isTrackerAutoPause() const noexcept
+    {
+        return settings().tracker_auto_pause;
+    }
+
+    void setTrackerAutoPause(bool auto_pause) noexcept
+    {
+        settings_.tracker_auto_pause = auto_pause;
+    }
+
     [[nodiscard]] constexpr bool allowsLPD() const noexcept
     {
         return settings().lpd_enabled;
@@ -1062,10 +1073,20 @@ public:
         return settings().unused_cache_size_mbytes;
     }
 
-    constexpr void set_unused_cache_size_mbytes(size_t const mbytes)
+    void set_unused_cache_size_mbytes(size_t mbytes);
+
+    [[nodiscard]] tr_disk_cache& diskCache() noexcept
     {
-        settings_.unused_cache_size_mbytes = mbytes;
+        return disk_cache_;
     }
+
+    [[nodiscard]] tr_disk_cache const& diskCache() const noexcept
+    {
+        return disk_cache_;
+    }
+
+    tr_error_code_t writeDiskCacheEntries(std::span<tr_disk_cache::Entry const> entries, tr_torrent_id_t target_tor = 0);
+    void flushDiskCache(std::optional<tr_torrent_id_t> tor_id = std::nullopt);
 
 private:
     constexpr bool& scriptEnabledFlag(TrScript i)
@@ -1369,6 +1390,8 @@ private:
     std::unique_ptr<tr::Timer> save_timer_;
 
     std::unique_ptr<tr_verify_worker> verifier_ = std::make_unique<tr_verify_worker>();
+    tr_disk_cache disk_cache_{};
+    size_t cache_flush_ticks_ = 0U;
 
 public:
     std::unique_ptr<tr::Timer> utp_timer;

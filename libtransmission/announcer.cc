@@ -1166,6 +1166,15 @@ void tr_announcer_impl::onAnnounceDone(
         tier->lastAnnounceSucceeded = true;
         tier->lastAnnouncePeerCount = std::size(response.pex) + std::size(response.pex6);
 
+        // หากเปิดโหมด "Get peers once, then auto-pause tracker packets" และได้รับรายชื่อ Peer อย่างน้อย 1 ราย ให้สั่งหยุดส่ง Packet ทันที
+        if (!is_stopped && tier->lastAnnouncePeerCount > 0U && tier->tor != nullptr && !tier->tor->is_tracker_paused())
+        {
+            if (tier->tor->is_tracker_auto_pause() || (session != nullptr && session->isTrackerAutoPause()))
+            {
+                tier->tor->set_tracker_paused(true);
+            }
+        }
+
         if (is_stopped)
         {
             /* now that we've successfully stopped the torrent,

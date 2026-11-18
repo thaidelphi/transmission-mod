@@ -807,6 +807,20 @@ struct tr_torrent
         return tracker_paused_;
     }
 
+    void set_tracker_auto_pause(bool auto_pause) noexcept
+    {
+        if (auto_pause != tracker_auto_pause_)
+        {
+            tracker_auto_pause_ = auto_pause;
+            set_dirty();
+        }
+    }
+
+    [[nodiscard]] constexpr bool is_tracker_auto_pause() const noexcept
+    {
+        return tracker_auto_pause_;
+    }
+
     [[nodiscard]] constexpr bool is_running() const noexcept
     {
         return is_running_;
@@ -1464,6 +1478,7 @@ private:
     bool sequential_download_ = false;
 
     bool tracker_paused_ = false;
+    bool tracker_auto_pause_ = false;
 
     tr_piece_index_t sequential_download_from_piece_ = 0;
 

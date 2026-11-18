@@ -37,6 +37,7 @@
 #include "libtransmission/crypto-utils.h"
 #include "libtransmission/file-utils.h"
 #include "libtransmission/file.h"
+#include "libtransmission/inout.h"
 #include "libtransmission/ip-cache.h"
 #include "libtransmission/interned-string.h"
 #include "libtransmission/log.h"
@@ -625,6 +626,11 @@ void tr_session::on_now_timer()
     // tr_session upkeep tasks to perform once per second
     tr_timeUpdate(std::chrono::system_clock::to_time_t(now));
     alt_speeds_.check_scheduler();
+
+    if ((++cache_flush_ticks_ % 10U) == 0U)
+    {
+        flushDiskCache();
+    }
 
     // set the timer to kick again right after (10ms after) the next second
     auto const target_time = std::chrono::time_point_cast<std::chrono::seconds>(now) + 1s + 10ms;
@@ -1478,6 +1484,8 @@ void tr_session::closeImplPart2(std::promise<void>* closed_promise, std::chrono:
 
     stats().save();
     peer_mgr_.reset();
+    flushDiskCache();
+    disk_cache_.clear();
     openFiles().close_all();
     tr_utp_close(this);
     this->udp_core_.reset();
@@ -2071,6 +2079,10 @@ void tr_session::verify_remove(tr_torrent const* const tor)
 
 void tr_session::verify_add(tr_torrent* const tor)
 {
+    if (tor != nullptr)
+    {
+        flushDiskCache(tor->id());
+    }
     if (verifier_)
     {
         verifier_->add(std::make_unique<tr_torrent::VerifyMediator>(tor), tor->get_priority());
@@ -2081,6 +2093,8 @@ void tr_session::verify_add(tr_torrent* const tor)
 
 void tr_session::close_torrent_files(tr_torrent_id_t const tor_id) noexcept
 {
+    flushDiskCache(tor_id);
+    disk_cache_.invalidate_torrent(tor_id);
     openFiles().close_torrent(tor_id);
 }
 
@@ -2197,6 +2211,52 @@ tr_session::tr_session(std::string_view config_dir, tr_variant const& settings_d
     now_timer_->start_repeating(1s);
     queue_timer_->start_repeating(QueueInterval);
     save_timer_->start_repeating(SaveInterval);
+
+    auto evicted = std::vector<tr_disk_cache::Entry>{};
+    disk_cache_.set_capacity_mbytes(settings_.unused_cache_size_mbytes, evicted);
+}
+
+void tr_session::set_unused_cache_size_mbytes(size_t const mbytes)
+{
+    settings_.unused_cache_size_mbytes = mbytes;
+    auto evicted = std::vector<tr_disk_cache::Entry>{};
+    disk_cache_.set_capacity_mbytes(mbytes, evicted);
+    if (!std::empty(evicted))
+    {
+        (void)writeDiskCacheEntries(evicted);
+    }
+}
+
+tr_error_code_t tr_session::writeDiskCacheEntries(
+    std::span<tr_disk_cache::Entry const> const entries,
+    tr_torrent_id_t const target_tor)
+{
+    auto target_err = tr_error_code_t{ 0 };
+    for (auto const& entry : entries)
+    {
+        auto* const tor = torrents_.get(entry.key.tor_id);
+        if (tor == nullptr || entry.data.empty())
+        {
+            continue;
+        }
+        auto const loc = tor->block_info().byte_loc(entry.key.byte_offset);
+        auto const err = tr_ioWriteRaw(*tor, openFiles(), loc, entry.data);
+        if (err != 0 && entry.key.tor_id == target_tor && target_err == 0)
+        {
+            target_err = err;
+        }
+    }
+    return target_err;
+}
+
+void tr_session::flushDiskCache(std::optional<tr_torrent_id_t> const tor_id)
+{
+    auto dirty_entries = std::vector<tr_disk_cache::Entry>{};
+    disk_cache_.take_dirty(tor_id, dirty_entries);
+    if (!std::empty(dirty_entries))
+    {
+        (void)writeDiskCacheEntries(dirty_entries);
+    }
 }
 
 void tr_session::addIncoming(std::shared_ptr<tr_peer_socket> socket)

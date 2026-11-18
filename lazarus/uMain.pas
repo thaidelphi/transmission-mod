@@ -71,6 +71,7 @@ type
     FSessionSyncCounter: Integer;
     FDesktopPrefs: TDesktopPrefs;
     FForceQuit: Boolean;
+    FScanningWatchDir: Boolean;
 
     // Top Menu
     FMainMenu: TMainMenu;
@@ -158,6 +159,7 @@ type
     procedure EndModalPause;
     procedure UpdateSleepPrevention;
     procedure PrefsApplied(Sender: TObject);
+    procedure ProcessWatchFolder;
 
     // Event Handlers
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -215,6 +217,7 @@ type
     procedure ActToggleAltSpeed(Sender: TObject);
     procedure ActToggleGlobalTrackerPause(Sender: TObject);
     procedure ActToggleSelectedTrackerPackets(Sender: TObject);
+    procedure ActToggleSelectedTrackerAutoPause(Sender: TObject);
     procedure ActOpenWebUi(Sender: TObject);
     procedure ActShowStatistics(Sender: TObject);
     procedure ActShowAbout(Sender: TObject);
@@ -315,6 +318,9 @@ begin
     FDesktopPrefs.PreventSleepWhenActive := Ini.ReadBool('Tasks', 'PreventSleepWhenActive', True);
     FDesktopPrefs.PlaySoundOnFinish := Ini.ReadBool('Tasks', 'PlaySoundOnFinish', True);
     FDesktopPrefs.ShowNotifyOnFinish := Ini.ReadBool('Tasks', 'ShowNotifyOnFinish', True);
+    FDesktopPrefs.WatchDirEnabled := Ini.ReadBool('WatchFolder', 'Enabled', False);
+    FDesktopPrefs.WatchDir := Ini.ReadString('WatchFolder', 'Directory', '');
+    FDesktopPrefs.WatchDirDeleteOriginal := Ini.ReadBool('WatchFolder', 'DeleteAfterAdd', False);
     FCompactView := Ini.ReadBool('View', 'CompactView', True);
     FSortMode := TSortMode(EnsureRange(Ini.ReadInteger('View', 'SortMode', 0), 0, Ord(High(TSortMode))));
     FReverseSort := Ini.ReadBool('View', 'ReverseSort', False);
@@ -374,6 +380,9 @@ begin
       Ini.WriteBool('Tasks', 'PreventSleepWhenActive', FDesktopPrefs.PreventSleepWhenActive);
       Ini.WriteBool('Tasks', 'PlaySoundOnFinish', FDesktopPrefs.PlaySoundOnFinish);
       Ini.WriteBool('Tasks', 'ShowNotifyOnFinish', FDesktopPrefs.ShowNotifyOnFinish);
+      Ini.WriteBool('WatchFolder', 'Enabled', FDesktopPrefs.WatchDirEnabled);
+      Ini.WriteString('WatchFolder', 'Directory', FDesktopPrefs.WatchDir);
+      Ini.WriteBool('WatchFolder', 'DeleteAfterAdd', FDesktopPrefs.WatchDirDeleteOriginal);
       Ini.WriteBool('View', 'CompactView', FCompactView);
       Ini.WriteInteger('View', 'SortMode', Ord(FSortMode));
       Ini.WriteBool('View', 'ReverseSort', FReverseSort);
@@ -428,7 +437,11 @@ begin
   FDesktopPrefs.PreventSleepWhenActive := True;
   FDesktopPrefs.PlaySoundOnFinish := True;
   FDesktopPrefs.ShowNotifyOnFinish := True;
+  FDesktopPrefs.WatchDirEnabled := False;
+  FDesktopPrefs.WatchDir := '';
+  FDesktopPrefs.WatchDirDeleteOriginal := False;
   FForceQuit := False;
+  FScanningWatchDir := False;
   OnCloseQuery := @FormCloseQuery;
   Application.OnQueryEndSession := @AppQueryEndSession;
 
@@ -576,6 +589,7 @@ begin
 
   AddItem(MnuTorrent, 'Ask Tracker for &More Peers', 0, @ActAnnounceSelected);
   AddItem(MnuTorrent, 'Pause &Tracker Packets', 0, @ActToggleSelectedTrackerPackets);
+  AddItem(MnuTorrent, 'Auto-Pause Tracker After First Peers', 0, @ActToggleSelectedTrackerAutoPause);
   AddItem(MnuTorrent, '&Pause', ShortCut(Ord('P'), [ssCtrl]), @ActPauseSelected);
   AddSep(MnuTorrent);
   AddItem(MnuTorrent, 'Set &Location...', 0, @ActSetLocation);
@@ -632,6 +646,7 @@ begin
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Verify Local Data'; PItem.OnClick := @ActVerifySelected; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Ask Tracker for More Peers'; PItem.OnClick := @ActAnnounceSelected; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Pause Tracker Packets'; PItem.OnClick := @ActToggleSelectedTrackerPackets; FTorrentPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Auto-Pause Tracker After First Peers'; PItem.OnClick := @ActToggleSelectedTrackerAutoPause; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Copy Magnet Link to Clipboard'; PItem.OnClick := @ActCopyMagnet; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Remove'; PItem.OnClick := @ActRemoveSelected; FTorrentPopup.Items.Add(PItem);
@@ -1865,7 +1880,7 @@ procedure TMainForm.UpdateTorrentMenuStates;
     Result := (TMethod(A).Code = TMethod(B).Code) and (TMethod(A).Data = TMethod(B).Data);
   end;
 
-  procedure SyncMenuItems(ParentItem: TMenuItem; HasSel, CanStart, CanPause, HasMagnet, TrkPaused: Boolean);
+  procedure SyncMenuItems(ParentItem: TMenuItem; HasSel, CanStart, CanPause, HasMagnet, TrkPaused, TrkAutoPause: Boolean);
   var
     I: Integer;
     MI: TMenuItem;
@@ -1878,7 +1893,7 @@ procedure TMainForm.UpdateTorrentMenuStates;
       if MI.Count > 0 then
       begin
         MI.Enabled := HasSel;
-        SyncMenuItems(MI, HasSel, CanStart, CanPause, HasMagnet, TrkPaused);
+        SyncMenuItems(MI, HasSel, CanStart, CanPause, HasMagnet, TrkPaused, TrkAutoPause);
       end
       else if SameClick(MI.OnClick, @ActStartSelected) or SameClick(MI.OnClick, @ActStartNowSelected) then
         MI.Enabled := CanStart
@@ -1891,6 +1906,11 @@ procedure TMainForm.UpdateTorrentMenuStates;
         MI.Enabled := HasSel;
         MI.Checked := HasSel and TrkPaused;
       end
+      else if SameClick(MI.OnClick, @ActToggleSelectedTrackerAutoPause) then
+      begin
+        MI.Enabled := HasSel;
+        MI.Checked := HasSel and TrkAutoPause;
+      end
       else
         MI.Enabled := HasSel;
     end;
@@ -1898,13 +1918,14 @@ procedure TMainForm.UpdateTorrentMenuStates;
 var
   I: Integer;
   T: TTorrentItem;
-  HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused: Boolean;
+  HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused, FirstTrkAutoPause: Boolean;
 begin
   HasSel := False;
   CanStart := False;
   CanPause := False;
   HasMagnet := False;
   FirstTrkPaused := False;
+  FirstTrkAutoPause := False;
 
   for I := 0 to FLstTorrents.Items.Count - 1 do
   begin
@@ -1912,7 +1933,10 @@ begin
     begin
       T := TTorrentItem(FFilteredTorrents[I]);
       if not HasSel then
+      begin
         FirstTrkPaused := T.TrackerPaused;
+        FirstTrkAutoPause := T.TrackerAutoPause;
+      end;
       HasSel := True;
       if T.IsPaused or (T.Status = TR_STATUS_DOWNLOAD_WAIT) or (T.Status = TR_STATUS_SEED_WAIT) then
         CanStart := True;
@@ -1923,9 +1947,9 @@ begin
     end;
   end;
 
-  SyncMenuItems(MnuTorrent, HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused);
+  SyncMenuItems(MnuTorrent, HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused, FirstTrkAutoPause);
   if FTorrentPopup <> nil then
-    SyncMenuItems(FTorrentPopup.Items, HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused);
+    SyncMenuItems(FTorrentPopup.Items, HasSel, CanStart, CanPause, HasMagnet, FirstTrkPaused, FirstTrkAutoPause);
 end;
 
 procedure TMainForm.UpdateActionStates;
@@ -2104,9 +2128,58 @@ begin
   end;
 end;
 
+procedure TMainForm.ProcessWatchFolder;
+var
+  DirPath, FullPath, DestPath, AddedName: string;
+  SR: TSearchRec;
+  AnyAdded: Boolean;
+begin
+  if FScanningWatchDir or (FModalDepth > 0) then Exit;
+  if (not FDesktopPrefs.WatchDirEnabled) or (Trim(FDesktopPrefs.WatchDir) = '') then Exit;
+  DirPath := IncludeTrailingPathDelimiter(Trim(FDesktopPrefs.WatchDir));
+  if not DirectoryExists(DirPath) then Exit;
+
+  FScanningWatchDir := True;
+  AnyAdded := False;
+  try
+    if FindFirst(DirPath + '*.torrent', faAnyFile and not faDirectory, SR) = 0 then
+    begin
+      try
+        repeat
+          if (SR.Attr and faDirectory) <> 0 then Continue;
+          if SR.Size <= 0 then Continue;
+          FullPath := DirPath + SR.Name;
+          if FRpc.AddTorrentFile(FullPath, FSessionConfig.DownloadDir,
+            FSessionConfig.StartAddedTorrents, TR_PRI_NORMAL, [], AddedName) then
+          begin
+            AnyAdded := True;
+            if FDesktopPrefs.WatchDirDeleteOriginal then
+              DeleteFile(FullPath)
+            else
+            begin
+              DestPath := FullPath + '.added';
+              if FileExists(DestPath) then
+                DestPath := FullPath + '.' + IntToStr(GetTickCount64) + '.added';
+              RenameFile(FullPath, DestPath);
+            end;
+          end;
+        until FindNext(SR) <> 0;
+      finally
+        FindClose(SR);
+      end;
+    end;
+  finally
+    FScanningWatchDir := False;
+  end;
+
+  if AnyAdded then
+    RefreshFromRpc;
+end;
+
 procedure TMainForm.TimerRefreshTimer(Sender: TObject);
 begin
   RefreshFromRpc;
+  ProcessWatchFolder;
 end;
 
 procedure TMainForm.FilterControlChange(Sender: TObject);
@@ -2576,6 +2649,20 @@ begin
   if (Length(Ids) = 0) or (T = nil) then Exit;
   NextPaused := not T.TrackerPaused;
   FRpc.SetTorrentsTrackerPaused(Ids, NextPaused);
+  RefreshFromRpc;
+end;
+
+procedure TMainForm.ActToggleSelectedTrackerAutoPause(Sender: TObject);
+var
+  Ids: TIntegerDynArray;
+  T: TTorrentItem;
+  NextAuto: Boolean;
+begin
+  Ids := GetSelectedTorrentIds;
+  T := GetFirstSelectedTorrent;
+  if (Length(Ids) = 0) or (T = nil) then Exit;
+  NextAuto := not T.TrackerAutoPause;
+  FRpc.SetTorrentsTrackerAutoPause(Ids, NextAuto);
   RefreshFromRpc;
 end;
 

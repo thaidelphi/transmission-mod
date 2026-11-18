@@ -79,6 +79,8 @@ type
     LvTrackers: TListView;
     LvFiles: TListView;
     BtnBlockTrkPackets: TButton;
+    ChkAutoPauseTrk: TCheckBox;
+    FSyncingTrkChk: Boolean;
 
     ChkHonorSession: TCheckBox;
     ChkDownLimit: TCheckBox;
@@ -107,6 +109,7 @@ type
     procedure BtnRemoveTrackerClick(Sender: TObject);
     procedure BtnToggleTrackerHttpsClick(Sender: TObject);
     procedure BtnBlockTrkPacketsClick(Sender: TObject);
+    procedure ChkAutoPauseTrkClick(Sender: TObject);
   public
     constructor CreatePanel(AOwner: TComponent; ARpc: TTransmissionRpcClient);
     destructor Destroy; override;
@@ -1114,6 +1117,14 @@ begin
   BtnBlockTrkPackets.Caption := 'Tracker Packet: ON (คลิกปิด)';
   BtnBlockTrkPackets.OnClick := @BtnBlockTrkPacketsClick;
 
+  ChkAutoPauseTrk := TCheckBox.Create(PnlTrkBtns);
+  ChkAutoPauseTrk.Parent := PnlTrkBtns;
+  ChkAutoPauseTrk.Left := 714; ChkAutoPauseTrk.Top := 8;
+  ChkAutoPauseTrk.Caption := 'ดึง Peer รอบแรกแล้วหยุดส่ง';
+  ChkAutoPauseTrk.Hint := 'เมื่อได้รับรายชื่อ Peer จาก Tracker รอบแรกแล้ว ให้หยุดส่ง Packet อัตโนมัติ';
+  ChkAutoPauseTrk.ShowHint := True;
+  ChkAutoPauseTrk.OnClick := @ChkAutoPauseTrkClick;
+
   // Tab 5: Files
   TsFilesTab := FPageControl.AddTabSheet;
   TsFilesTab.Caption := 'Files';
@@ -1340,6 +1351,15 @@ begin
       BtnBlockTrkPackets.Caption := 'Tracker Packet: OFF (คลิกเปิด)'
     else
       BtnBlockTrkPackets.Caption := 'Tracker Packet: ON (คลิกปิด)';
+  end;
+  if ChkAutoPauseTrk <> nil then
+  begin
+    FSyncingTrkChk := True;
+    try
+      ChkAutoPauseTrk.Checked := FOwnedTorrent.TrackerAutoPause;
+    finally
+      FSyncingTrkChk := False;
+    end;
   end;
 
   // Update Peers ListView
@@ -1740,6 +1760,31 @@ begin
   end;
 end;
 
+procedure TDetailsPanel.ChkAutoPauseTrkClick(Sender: TObject);
+begin
+  if FSyncingTrkChk or (FCurrentId <= 0) then Exit;
+  if FRpc.SetTorrentsTrackerAutoPause([FCurrentId], ChkAutoPauseTrk.Checked) then
+  begin
+    RefreshDetails;
+    NotifyDataChanged;
+  end
+  else
+  begin
+    FSyncingTrkChk := True;
+    try
+      ChkAutoPauseTrk.Checked := FOwnedTorrent.TrackerAutoPause;
+    finally
+      FSyncingTrkChk := False;
+    end;
+    NotifyModalStart;
+    try
+      MessageDlg('Failed to update auto-pause setting: ' + FRpc.LastError, mtError, [mbOK], 0);
+    finally
+      NotifyModalEnd;
+    end;
+  end;
+end;
+
 procedure ShowDetailsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   Torrent: TTorrentItem);
 var
@@ -1754,9 +1799,9 @@ begin
     F.Caption := Torrent.Name + ' Properties';
     F.Position := poMainFormCenter;
     F.BorderStyle := bsSizeable;
-    F.ClientWidth := 720;
+    F.ClientWidth := 920;
     F.ClientHeight := 455;
-    F.Constraints.MinWidth := 680;
+    F.Constraints.MinWidth := 780;
     F.Constraints.MinHeight := 400;
 
     PnlBottom := TPanel.Create(F);
@@ -1767,7 +1812,7 @@ begin
 
     BtnClose := TButton.Create(PnlBottom);
     BtnClose.Parent := PnlBottom;
-    BtnClose.Left := 550; BtnClose.Top := 8; BtnClose.Width := 88;
+    BtnClose.Left := 816; BtnClose.Top := 8; BtnClose.Width := 88;
     BtnClose.Anchors := [akRight, akTop];
     BtnClose.Caption := 'Close';
     BtnClose.Cancel := True;
@@ -1982,6 +2027,9 @@ type
     ChkIncompleteDir: TCheckBox;
     EdtIncompleteDir: TEdit;
     ChkRenamePartial: TCheckBox;
+    ChkWatchDir: TCheckBox;
+    EdtWatchDir: TEdit;
+    ChkWatchDelete: TCheckBox;
 
     // 2: Tasks (เหมือนภาพตัวอย่าง BitComet)
     ChkStartAdded: TCheckBox;
@@ -1994,6 +2042,7 @@ type
     SpnQueueDown: TSpinEdit;
     ChkQueueSeed: TCheckBox;
     SpnQueueSeed: TSpinEdit;
+    SpnCacheSizeMiB: TSpinEdit;
 
     // 3: BitTorrent
     CmbEncryption: TComboBox;
@@ -2003,6 +2052,7 @@ type
     SpnPeerGlobal: TSpinEdit;
     SpnPeerPerTorrent: TSpinEdit;
     ChkBlockTrackers: TCheckBox;
+    ChkAutoPauseTrackers: TCheckBox;
 
     // 4: Seeding Rules
     ChkRatioLimit: TCheckBox;
@@ -2034,6 +2084,7 @@ type
     procedure SwitchCategory(Idx: Integer);
     procedure BtnBrowseSaveDirClick(Sender: TObject);
     procedure BtnBrowseIncDirClick(Sender: TObject);
+    procedure BtnBrowseWatchDirClick(Sender: TObject);
     procedure BtnTestPortClick(Sender: TObject);
     procedure BtnUpdateBlocklistClick(Sender: TObject);
     procedure BtnOpenWebClientClick(Sender: TObject);
@@ -2105,6 +2156,15 @@ begin
     EdtIncompleteDir.Text := Dir;
 end;
 
+procedure TPrefsForm.BtnBrowseWatchDirClick(Sender: TObject);
+var
+  Dir: string;
+begin
+  Dir := EdtWatchDir.Text;
+  if SelectDirectory('Select Watch Folder for .torrent files', '', Dir) then
+    EdtWatchDir.Text := Dir;
+end;
+
 procedure TPrefsForm.BtnTestPortClick(Sender: TObject);
 var
   OpenOk: Boolean;
@@ -2167,6 +2227,9 @@ begin
   DesktopPtr^.PreventSleepWhenActive := ChkPreventSleep.Checked;
   DesktopPtr^.PlaySoundOnFinish := ChkFinishSound.Checked;
   DesktopPtr^.ShowNotifyOnFinish := ChkFinishNotify.Checked;
+  DesktopPtr^.WatchDirEnabled := ChkWatchDir.Checked;
+  DesktopPtr^.WatchDir := Trim(EdtWatchDir.Text);
+  DesktopPtr^.WatchDirDeleteOriginal := ChkWatchDelete.Checked;
   SetWindowsAutoStart(ChkAutoStart.Checked, ChkStartMinimized.Checked);
 
   Args := TJSONObject.Create;
@@ -2187,6 +2250,7 @@ begin
   Args.Add('download-queue-size', SpnQueueDown.Value);
   Args.Add('seed-queue-enabled', ChkQueueSeed.Checked);
   Args.Add('seed-queue-size', SpnQueueSeed.Value);
+  Args.Add('cache_size_mib', SpnCacheSizeMiB.Value);
   Args.Add('seedRatioLimited', ChkRatioLimit.Checked);
   Args.Add('seedRatioLimit', StrToFloatDef(EdtRatioLimit.Text, 2.0));
   Args.Add('idle-seeding-limit-enabled', ChkIdleLimit.Checked);
@@ -2209,6 +2273,7 @@ begin
   Args.Add('peer-limit-per-torrent', SpnPeerPerTorrent.Value);
   Args.Add('peer-limit-global', SpnPeerGlobal.Value);
   Args.Add('tracker_paused', ChkBlockTrackers.Checked);
+  Args.Add('tracker_auto_pause', ChkAutoPauseTrackers.Checked);
 
   RpcRef.UpdateSession(Args);
   RpcRef.FetchSession(ConfigPtr^);
@@ -2240,9 +2305,9 @@ var
   F: TPrefsForm;
   PnlNav, PnlRight, PnlPageHost: TPanel;
   DivLine: TBevel;
-  Gb1, Gb2, Gb3: TGroupBox;
+  Gb1, Gb2, Gb3, Gb4: TGroupBox;
   Lbl: TLabel;
-  BtnBrowse, BtnBrowseInc, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel, BtnApply: TButton;
+  BtnBrowse, BtnBrowseInc, BtnBrowseWatch, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel, BtnApply: TButton;
   AutoStartOn, AutoStartMin: Boolean;
   I: Integer;
 
@@ -2391,49 +2456,67 @@ begin
     F.ChkUtp := MakeCheck(Gb2, 14, 116, 'Enable µTP (Micro Transport Protocol)', Config.UtpEnabled);
 
     // --- Page 1: Directories ---
-    Gb1 := MakeGroup(F.Pages[1], 8, 110, 'Default Download Directory');
-    MakeLabel(Gb1, 14, 24, 'Save downloaded files to:');
+    Gb1 := MakeGroup(F.Pages[1], 8, 92, 'Default Download Directory');
+    MakeLabel(Gb1, 14, 22, 'Save downloaded files to:');
     F.EdtDownloadDir := TEdit.Create(Gb1);
     F.EdtDownloadDir.Parent := Gb1;
-    F.EdtDownloadDir.Left := 14; F.EdtDownloadDir.Top := 46; F.EdtDownloadDir.Width := 412;
+    F.EdtDownloadDir.Left := 14; F.EdtDownloadDir.Top := 42; F.EdtDownloadDir.Width := 412;
     F.EdtDownloadDir.Text := Config.DownloadDir;
     BtnBrowse := TButton.Create(Gb1);
     BtnBrowse.Parent := Gb1;
-    BtnBrowse.Left := 434; BtnBrowse.Top := 44; BtnBrowse.Width := 86; BtnBrowse.Height := 25;
+    BtnBrowse.Left := 434; BtnBrowse.Top := 40; BtnBrowse.Width := 86; BtnBrowse.Height := 25;
     BtnBrowse.Caption := 'Browse...';
     BtnBrowse.OnClick := @F.BtnBrowseSaveDirClick;
 
-    Gb2 := MakeGroup(F.Pages[1], 128, 150, 'Temporary / Incomplete Files');
-    F.ChkIncompleteDir := MakeCheck(Gb2, 14, 24, 'Store incomplete downloads in temporary folder:', Config.IncompleteDirEnabled);
+    Gb2 := MakeGroup(F.Pages[1], 108, 122, 'Temporary / Incomplete Files');
+    F.ChkIncompleteDir := MakeCheck(Gb2, 14, 22, 'Store incomplete downloads in temporary folder:', Config.IncompleteDirEnabled);
     F.EdtIncompleteDir := TEdit.Create(Gb2);
     F.EdtIncompleteDir.Parent := Gb2;
-    F.EdtIncompleteDir.Left := 14; F.EdtIncompleteDir.Top := 52; F.EdtIncompleteDir.Width := 412;
+    F.EdtIncompleteDir.Left := 14; F.EdtIncompleteDir.Top := 48; F.EdtIncompleteDir.Width := 412;
     F.EdtIncompleteDir.Text := Config.IncompleteDir;
     BtnBrowseInc := TButton.Create(Gb2);
     BtnBrowseInc.Parent := Gb2;
-    BtnBrowseInc.Left := 434; BtnBrowseInc.Top := 50; BtnBrowseInc.Width := 86; BtnBrowseInc.Height := 25;
+    BtnBrowseInc.Left := 434; BtnBrowseInc.Top := 46; BtnBrowseInc.Width := 86; BtnBrowseInc.Height := 25;
     BtnBrowseInc.Caption := 'Browse...';
     BtnBrowseInc.OnClick := @F.BtnBrowseIncDirClick;
-    F.ChkRenamePartial := MakeCheck(Gb2, 14, 92, 'Append ".part" file extension to unfinished files', Config.RenamePartialFiles);
+    F.ChkRenamePartial := MakeCheck(Gb2, 14, 84, 'Append ".part" file extension to unfinished files', Config.RenamePartialFiles);
     F.ChkRenamePartial.OnChange := @F.SyncPartialCheck;
 
+    Gb3 := MakeGroup(F.Pages[1], 238, 132, 'Watch Folder (โฟลเดอร์เฝ้าดูไฟล์ .torrent อัตโนมัติ)');
+    F.ChkWatchDir := MakeCheck(Gb3, 14, 24, 'Automatically add .torrent files from Watch Folder:', DesktopPrefs.WatchDirEnabled);
+    F.EdtWatchDir := TEdit.Create(Gb3);
+    F.EdtWatchDir.Parent := Gb3;
+    F.EdtWatchDir.Left := 14; F.EdtWatchDir.Top := 52; F.EdtWatchDir.Width := 412;
+    F.EdtWatchDir.Text := DesktopPrefs.WatchDir;
+    BtnBrowseWatch := TButton.Create(Gb3);
+    BtnBrowseWatch.Parent := Gb3;
+    BtnBrowseWatch.Left := 434; BtnBrowseWatch.Top := 50; BtnBrowseWatch.Width := 86; BtnBrowseWatch.Height := 25;
+    BtnBrowseWatch.Caption := 'Browse...';
+    BtnBrowseWatch.OnClick := @F.BtnBrowseWatchDirClick;
+    F.ChkWatchDelete := MakeCheck(Gb3, 14, 88, 'Delete .torrent file after adding (otherwise rename to .added)', DesktopPrefs.WatchDirDeleteOriginal);
+
     // --- Page 2: Tasks (คล้ายหน้า Tasks ของ BitComet) ---
-    Gb1 := MakeGroup(F.Pages[2], 8, 140, 'Download');
-    F.ChkStartAdded := MakeCheck(Gb1, 14, 24, 'Auto-start added tasks immediately', Config.StartAddedTorrents);
-    F.ChkRenamePartialTask := MakeCheck(Gb1, 14, 50, 'Add ".part" file extension to unfinished files', Config.RenamePartialFiles);
+    Gb1 := MakeGroup(F.Pages[2], 8, 130, 'Download');
+    F.ChkStartAdded := MakeCheck(Gb1, 14, 22, 'Auto-start added tasks immediately', Config.StartAddedTorrents);
+    F.ChkRenamePartialTask := MakeCheck(Gb1, 14, 46, 'Add ".part" file extension to unfinished files', Config.RenamePartialFiles);
     F.ChkRenamePartialTask.OnChange := @F.SyncPartialCheck;
-    F.ChkTrashTorrent := MakeCheck(Gb1, 14, 76, 'Move original .torrent file to Recycle Bin after adding', Config.TrashOriginalTorrentFiles);
-    F.ChkPreventSleep := MakeCheck(Gb1, 14, 102, 'Avoid system entering suspend/sleeping mode when any task is running', DesktopPrefs.PreventSleepWhenActive);
+    F.ChkTrashTorrent := MakeCheck(Gb1, 14, 70, 'Move original .torrent file to Recycle Bin after adding', Config.TrashOriginalTorrentFiles);
+    F.ChkPreventSleep := MakeCheck(Gb1, 14, 94, 'Avoid system entering suspend/sleeping mode when any task is running', DesktopPrefs.PreventSleepWhenActive);
 
-    Gb2 := MakeGroup(F.Pages[2], 156, 86, 'When Download Finished');
-    F.ChkFinishSound := MakeCheck(Gb2, 14, 24, 'Play sound when task finished', DesktopPrefs.PlaySoundOnFinish);
-    F.ChkFinishNotify := MakeCheck(Gb2, 14, 50, 'Display notification when task finished', DesktopPrefs.ShowNotifyOnFinish);
+    Gb2 := MakeGroup(F.Pages[2], 144, 78, 'When Download Finished');
+    F.ChkFinishSound := MakeCheck(Gb2, 14, 22, 'Play sound when task finished', DesktopPrefs.PlaySoundOnFinish);
+    F.ChkFinishNotify := MakeCheck(Gb2, 14, 46, 'Display notification when task finished', DesktopPrefs.ShowNotifyOnFinish);
 
-    Gb3 := MakeGroup(F.Pages[2], 250, 104, 'Task Queue');
-    F.ChkQueueDown := MakeCheck(Gb3, 14, 26, 'Maximum number of concurrent downloading BitTorrent tasks:', Config.DownloadQueueEnabled);
-    F.SpnQueueDown := MakeSpin(Gb3, 415, 22, 85, 1, 200, Config.DownloadQueueSize);
-    F.ChkQueueSeed := MakeCheck(Gb3, 14, 60, 'Maximum number of concurrent seeding BitTorrent tasks:', Config.SeedQueueEnabled);
-    F.SpnQueueSeed := MakeSpin(Gb3, 415, 56, 85, 1, 200, Config.SeedQueueSize);
+    Gb3 := MakeGroup(F.Pages[2], 228, 92, 'Task Queue');
+    F.ChkQueueDown := MakeCheck(Gb3, 14, 24, 'Maximum number of concurrent downloading BitTorrent tasks:', Config.DownloadQueueEnabled);
+    F.SpnQueueDown := MakeSpin(Gb3, 415, 20, 85, 1, 200, Config.DownloadQueueSize);
+    F.ChkQueueSeed := MakeCheck(Gb3, 14, 56, 'Maximum number of concurrent seeding BitTorrent tasks:', Config.SeedQueueEnabled);
+    F.SpnQueueSeed := MakeSpin(Gb3, 415, 52, 85, 1, 200, Config.SeedQueueSize);
+
+    Gb4 := MakeGroup(F.Pages[2], 326, 62, 'Disk RAM Cache (แคชอ่าน/เขียนดิสก์ใน RAM)');
+    MakeLabel(Gb4, 14, 26, 'RAM Disk Cache Size (MiB, 0 = OS Cache only):');
+    F.SpnCacheSizeMiB := MakeSpin(Gb4, 340, 22, 95, 0, 4096, Config.CacheSizeMiB);
+    MakeLabel(Gb4, 444, 26, 'MiB');
 
     // --- Page 3: BitTorrent ---
     Gb1 := MakeGroup(F.Pages[3], 8, 148, 'Protocol & Peer Discovery');
@@ -2455,12 +2538,13 @@ begin
     F.ChkDht := MakeCheck(Gb1, 14, 84, 'Enable Distributed Hash Table (DHT) Network', Config.DhtEnabled);
     F.ChkLpd := MakeCheck(Gb1, 14, 110, 'Enable Local Peer Discovery (LPD)', Config.LpdEnabled);
 
-    Gb2 := MakeGroup(F.Pages[3], 164, 152, 'Peer Limits & Tracker Packet Control');
-    MakeLabel(Gb2, 14, 28, 'Max peers per torrent:');
-    F.SpnPeerPerTorrent := MakeSpin(Gb2, 220, 24, 90, 1, 2000, Config.PeerLimitPerTorrent);
-    MakeLabel(Gb2, 14, 60, 'Global max peer connections:');
-    F.SpnPeerGlobal := MakeSpin(Gb2, 220, 56, 90, 1, 5000, Config.PeerLimitGlobal);
-    F.ChkBlockTrackers := MakeCheck(Gb2, 14, 98, 'Block ALL outgoing tracker packets globally (No Tracker Mode)', Config.TrackerPaused);
+    Gb2 := MakeGroup(F.Pages[3], 164, 166, 'Peer Limits & Tracker Packet Control');
+    MakeLabel(Gb2, 14, 26, 'Max peers per torrent:');
+    F.SpnPeerPerTorrent := MakeSpin(Gb2, 220, 22, 90, 1, 2000, Config.PeerLimitPerTorrent);
+    MakeLabel(Gb2, 14, 58, 'Global max peer connections:');
+    F.SpnPeerGlobal := MakeSpin(Gb2, 220, 54, 90, 1, 5000, Config.PeerLimitGlobal);
+    F.ChkBlockTrackers := MakeCheck(Gb2, 14, 94, 'Block ALL outgoing tracker packets globally (No Tracker Mode)', Config.TrackerPaused);
+    F.ChkAutoPauseTrackers := MakeCheck(Gb2, 14, 122, 'Get peers once, then auto-pause tracker packets (ดึง Peer รอบแรกแล้วหยุดส่ง)', Config.TrackerAutoPause);
 
     // --- Page 4: Seeding Rules ---
     Gb1 := MakeGroup(F.Pages[4], 8, 120, 'Auto-Stop Seeding Conditions');

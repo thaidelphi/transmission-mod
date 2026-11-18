@@ -701,10 +701,15 @@
             <label>Listening Peer Port:</label>
             <input type="number" id="prefPeerPort" value="51413" />
           </div>
+          <div class="form-row" style="flex:1;">
+            <label>Disk RAM Cache (MiB):</label>
+            <input type="number" min="0" max="4096" id="prefCacheSize" value="4" />
+          </div>
         </div>
         <label><input type="checkbox" id="prefDht" checked /> Enable DHT (Distributed Hash Table)</label>
         <label><input type="checkbox" id="prefPex" checked /> Enable PEX (Peer Exchange)</label>
         <label><input type="checkbox" id="prefUtp" checked /> Enable µTP</label>
+        <label><input type="checkbox" id="prefAutoPauseTrackers" /> Get peers once, then auto-pause tracker packets</label>
       </div>
       <div class="modal-footer">
         <button class="btn" onclick="closeModal('modalPrefs')">Cancel</button>
@@ -935,7 +940,7 @@
                      'leftUntilDone','rateDownload','rateUpload','uploadRatio','uploadedEver',
                      'downloadedEver','eta','peersConnected','peersSendingToUs','peersGettingFromUs',
                      'error','errorString','downloadDir','isFinished','queuePosition','magnetLink',
-                     'tracker_paused']
+                     'tracker_paused','tracker_auto_pause']
           }),
           rpcCall('session-stats')
         ]);
@@ -1028,6 +1033,10 @@
       await rpcCall('torrent-set', { ids: [torId], 'tracker_paused': !!paused });
       await pollAll();
     }
+    async function toggleTorrentAutoPause(torId, autoPause) {
+      await rpcCall('torrent-set', { ids: [torId], 'tracker_auto_pause': !!autoPause });
+      await pollAll();
+    }
     async function toggleSelectedTrackerPaused() {
       const ids = getSelArray();
       if (!ids.length) return;
@@ -1058,7 +1067,7 @@
         fields: ['id','name','hashString','status','percentDone','totalSize','sizeWhenDone',
                  'uploadedEver','downloadedEver','uploadRatio','rateDownload','rateUpload',
                  'pieceCount','pieceSize','creator','comment','downloadDir','errorString',
-                 'files','fileStats','peers','trackerStats','tracker_paused']
+                 'files','fileStats','peers','trackerStats','tracker_paused','tracker_auto_pause']
       });
       if (res.result !== 'success' || !res.arguments.torrents.length) return;
       const t = res.arguments.torrents[0];
@@ -1088,19 +1097,28 @@
       } else if (currentInspTab === 'trackers') {
         const trks = t.trackerStats || [];
         const pktPaused = !!t.tracker_paused;
+        const autoPause = !!t.tracker_auto_pause;
         const globalPaused = !!sessionConfig['tracker_paused'];
         const pktBtnText = pktPaused ? '🚫 Packet: OFF (คลิกเปิด)' : (globalPaused ? '⚠️ Global OFF (คลิกปิดรายตัว)' : '📡 Packet: ON (คลิกปิด)');
         const pktBtnCls = (pktPaused || globalPaused) ? 'trk-btn trk-btn-pkt-off' : 'trk-btn trk-btn-pkt-on';
+        const autoBtnText = autoPause ? '✓ ดึง Peer รอบแรกแล้วหยุด: ON' : 'ดึง Peer รอบแรกแล้วหยุด: OFF';
+        const autoBtnCls = autoPause ? 'trk-btn trk-btn-pkt-on' : 'trk-btn';
         const rowsHtml = trks.map(k => `<tr><td>${(k.tier || 0) + 1}</td><td>${escapeHtml(k.announce)}</td><td>${escapeHtml(k.lastAnnounceResult)}</td><td>${k.seederCount >= 0 ? k.seederCount : '-'}</td></tr>`).join('');
         const existingTa = document.getElementById('txtTrackerList');
         const existingBody = document.getElementById('trkStatusBody');
         const existingPktBtn = document.getElementById('btnTrkPacketState');
+        const existingAutoBtn = document.getElementById('btnTrkAutoPause');
         if (existingTa && existingBody && window.trackerEditorTorId === t.id) {
           existingBody.innerHTML = rowsHtml;
           if (existingPktBtn) {
             existingPktBtn.textContent = pktBtnText;
             existingPktBtn.className = pktBtnCls;
             existingPktBtn.onclick = () => toggleTorrentTrackerPaused(t.id, !pktPaused);
+          }
+          if (existingAutoBtn) {
+            existingAutoBtn.textContent = autoBtnText;
+            existingAutoBtn.className = autoBtnCls;
+            existingAutoBtn.onclick = () => toggleTorrentAutoPause(t.id, !autoPause);
           }
           if (!window.trackerEditorDirty && document.activeElement !== existingTa) {
             existingTa.value = formatTrackerListText(trks);
@@ -1114,6 +1132,7 @@
             <div class="tracker-toolbar">
               <span class="tracker-toolbar-label">Tracker List:</span>
               <button type="button" id="btnTrkPacketState" class="${pktBtnCls}" onclick="toggleTorrentTrackerPaused(${t.id}, ${!pktPaused})">${pktBtnText}</button>
+              <button type="button" id="btnTrkAutoPause" class="${autoBtnCls}" onclick="toggleTorrentAutoPause(${t.id}, ${!autoPause})">${autoBtnText}</button>
               <button type="button" class="trk-btn trk-btn-toggle" onclick="convertTrackerList('toggle')">&#8644; สลับ https:// &harr; ht..tps://</button>
               <button type="button" class="trk-btn trk-btn-obf" onclick="convertTrackerList('to_dots')">&#10145; เป็น ht..tps://</button>
               <button type="button" class="trk-btn trk-btn-restore" onclick="convertTrackerList('to_std')">&#11013; กลับเป็น https://</button>
@@ -1231,9 +1250,12 @@
       document.getElementById('prefRatioEn').checked = !!sessionConfig['seedRatioLimited'];
       document.getElementById('prefRatioLim').value = sessionConfig['seedRatioLimit'] || 2.0;
       document.getElementById('prefPeerPort').value = sessionConfig['peer-port'] || 51413;
+      const csVal = (sessionConfig['cache_size_mib'] !== undefined) ? sessionConfig['cache_size_mib'] : (sessionConfig['cache-size-mb'] !== undefined ? sessionConfig['cache-size-mb'] : 4);
+      document.getElementById('prefCacheSize').value = csVal;
       document.getElementById('prefDht').checked = !!sessionConfig['dht-enabled'];
       document.getElementById('prefPex').checked = !!sessionConfig['pex-enabled'];
       document.getElementById('prefUtp').checked = !!sessionConfig['utp-enabled'];
+      document.getElementById('prefAutoPauseTrackers').checked = !!sessionConfig['tracker_auto_pause'];
       document.getElementById('modalPrefs').classList.add('open');
     }
 
@@ -1249,9 +1271,11 @@
         'seedRatioLimited': document.getElementById('prefRatioEn').checked,
         'seedRatioLimit': Number(document.getElementById('prefRatioLim').value),
         'peer-port': Number(document.getElementById('prefPeerPort').value),
+        'cache_size_mib': Number(document.getElementById('prefCacheSize').value),
         'dht-enabled': document.getElementById('prefDht').checked,
         'pex-enabled': document.getElementById('prefPex').checked,
-        'utp-enabled': document.getElementById('prefUtp').checked
+        'utp-enabled': document.getElementById('prefUtp').checked,
+        'tracker_auto_pause': document.getElementById('prefAutoPauseTrackers').checked
       });
       closeModal('modalPrefs');
       await loadSessionConfig();
