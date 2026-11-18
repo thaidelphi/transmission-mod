@@ -67,6 +67,8 @@ type
     FStatsMode: TStatsDisplayMode;
     FSelectedIds: TList;
     FUpdatingFilterCombo: Boolean;
+    FModalDepth: Integer;
+    FSessionSyncCounter: Integer;
 
     // Top Menu
     FMainMenu: TMainMenu;
@@ -137,15 +139,25 @@ type
     procedure RebuildTrackerFilterList;
     procedure ApplyFilterAndSort;
     procedure UpdateActionStates;
+    procedure UpdateTorrentMenuStates;
     procedure UpdateStatusBarText;
     procedure CheckCompletedNotifications;
     procedure RefreshFromRpc;
+    procedure FixTopBarOrder;
+    procedure ApplyListItemHeight;
+    procedure BeginModalPause;
+    procedure EndModalPause;
 
     // Event Handlers
     procedure FormDropFiles(Sender: TObject; const FileNames: array of string);
     procedure TimerRefreshTimer(Sender: TObject);
+    procedure TorrentPopupBefore(Sender: TObject);
+    procedure TrayPopupBefore(Sender: TObject);
+    procedure FilterBarResize(Sender: TObject);
+    procedure StatusBarResize(Sender: TObject);
 
     procedure LstTorrentsDrawItem(Control: TWinControl; Index: Integer; ARect: TRect; State: TOwnerDrawState);
+    procedure LstTorrentsMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
     procedure LstTorrentsDblClick(Sender: TObject);
     procedure LstTorrentsSelectionChange(Sender: TObject; User: Boolean);
     procedure LstTorrentsResize(Sender: TObject);
@@ -291,10 +303,8 @@ begin
     MiReverseSort.Checked := FReverseSort;
     MiSortItems[FSortMode].Checked := True;
 
-    if FCompactView then
-      FLstTorrents.ItemHeight := 28
-    else
-      FLstTorrents.ItemHeight := 68;
+    ApplyListItemHeight;
+    FixTopBarOrder;
 
     LocalSess := Ini.ReadBool('Session', 'LocalSession', True);
     HostStr := Ini.ReadString('Session', 'Host', '127.0.0.1');
@@ -376,6 +386,8 @@ begin
   FKnownFinishedIds := TList.Create;
   FFirstLoadDone := False;
   FUpdatingFilterCombo := False;
+  FModalDepth := 0;
+  FSessionSyncCounter := 0;
 
   FCompactView := True;
   FSortMode := smQueue;
@@ -391,6 +403,7 @@ begin
   BuildStatusBar;
   BuildTorrentList;
   BuildTrayIcon;
+  FixTopBarOrder;
 
   LoadAppSettings;
 
@@ -400,6 +413,7 @@ begin
   FWebServer.StartServer;
   RenderStatusBarIcons;
   RefreshFromRpc;
+  UpdateActionStates;
 
   FTimerRefresh := TTimer.Create(Self);
   FTimerRefresh.Interval := 1500;
@@ -558,6 +572,7 @@ begin
 
   // Context Menu on Torrent List
   FTorrentPopup := TPopupMenu.Create(Self);
+  FTorrentPopup.OnPopup := @TorrentPopupBefore;
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Properties...'; PItem.OnClick := @ActProperties; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Open Folder'; PItem.OnClick := @ActOpenFolder; FTorrentPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FTorrentPopup.Items.Add(PItem);
@@ -575,10 +590,10 @@ begin
 
   // Ratio / Stats Popup Menu
   FStatsPopup := TPopupMenu.Create(Self);
-  PItem := TMenuItem.Create(Self); PItem.Caption := 'Total Ratio'; PItem.Tag := 0; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
-  PItem := TMenuItem.Create(Self); PItem.Caption := 'Session Ratio'; PItem.Tag := 1; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
-  PItem := TMenuItem.Create(Self); PItem.Caption := 'Total Transfer'; PItem.Tag := 2; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
-  PItem := TMenuItem.Create(Self); PItem.Caption := 'Session Transfer'; PItem.Tag := 3; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Total Ratio'; PItem.Tag := 0; PItem.RadioItem := True; PItem.GroupIndex := 1; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Session Ratio'; PItem.Tag := 1; PItem.RadioItem := True; PItem.GroupIndex := 1; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Total Transfer'; PItem.Tag := 2; PItem.RadioItem := True; PItem.GroupIndex := 1; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Session Transfer'; PItem.Tag := 3; PItem.RadioItem := True; PItem.GroupIndex := 1; PItem.OnClick := @ActStatsModeClick; FStatsPopup.Items.Add(PItem);
 
   // Hamburger Options Popup Menu
   FOptionsPopup := TPopupMenu.Create(Self);
@@ -595,6 +610,7 @@ var
   PItem: TMenuItem;
 begin
   FTrayPopup := TPopupMenu.Create(Self);
+  FTrayPopup.OnPopup := @TrayPopupBefore;
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Show / Hide Transmission'; PItem.OnClick := @ActToggleMainWindow; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Open Web Interface...'; PItem.OnClick := @ActOpenWebUi; FTrayPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FTrayPopup.Items.Add(PItem);
@@ -662,72 +678,79 @@ begin
 end;
 
 procedure TMainForm.RenderToolbarIcons;
+  procedure DrawGlyphIcon(C: TCanvas; Kind, OffsetX: Integer; PenCol: TColor);
+  begin
+    C.Pen.Color := PenCol;
+    C.Pen.Width := 2;
+    C.Brush.Style := bsClear;
+
+    case Kind of
+      1: // Open File (Page outline + up arrow)
+        begin
+          C.Polygon([Point(OffsetX + 5, 3), Point(OffsetX + 14, 3), Point(OffsetX + 19, 8), Point(OffsetX + 19, 21), Point(OffsetX + 5, 21)]);
+          C.MoveTo(OffsetX + 14, 3); C.LineTo(OffsetX + 14, 8); C.LineTo(OffsetX + 19, 8);
+          C.MoveTo(OffsetX + 12, 18); C.LineTo(OffsetX + 12, 10);
+          C.MoveTo(OffsetX + 9, 13); C.LineTo(OffsetX + 12, 10); C.LineTo(OffsetX + 15, 13);
+        end;
+      2: // Open URL (Globe)
+        begin
+          C.Ellipse(OffsetX + 3, 3, OffsetX + 21, 21);
+          C.Ellipse(OffsetX + 8, 3, OffsetX + 16, 21);
+          C.MoveTo(OffsetX + 3, 12); C.LineTo(OffsetX + 21, 12);
+          C.MoveTo(OffsetX + 5, 7); C.LineTo(OffsetX + 19, 7);
+          C.MoveTo(OffsetX + 5, 17); C.LineTo(OffsetX + 19, 17);
+        end;
+      3: // Start (Play triangle)
+        begin
+          C.Polygon([Point(OffsetX + 7, 4), Point(OffsetX + 19, 12), Point(OffsetX + 7, 20)]);
+        end;
+      4: // Pause (Two vertical bars)
+        begin
+          C.MoveTo(OffsetX + 8, 5); C.LineTo(OffsetX + 8, 19);
+          C.MoveTo(OffsetX + 16, 5); C.LineTo(OffsetX + 16, 19);
+        end;
+      5: // Remove (Horizontal minus line)
+        begin
+          C.MoveTo(OffsetX + 4, 12); C.LineTo(OffsetX + 20, 12);
+        end;
+      6: // Properties (Circle with 'i')
+        begin
+          C.Ellipse(OffsetX + 3, 3, OffsetX + 21, 21);
+          C.MoveTo(OffsetX + 12, 10); C.LineTo(OffsetX + 12, 17);
+          C.Pixels[OffsetX + 12, 7] := PenCol;
+          C.Pixels[OffsetX + 11, 7] := PenCol;
+          C.Pixels[OffsetX + 12, 6] := PenCol;
+        end;
+      7: // Web UI (Browser window with top bar)
+        begin
+          C.Rectangle(OffsetX + 3, 4, OffsetX + 21, 20);
+          C.MoveTo(OffsetX + 3, 9); C.LineTo(OffsetX + 21, 9);
+          C.Pixels[OffsetX + 6, 6] := PenCol;
+          C.Pixels[OffsetX + 9, 6] := PenCol;
+          C.MoveTo(OffsetX + 8, 14); C.LineTo(OffsetX + 16, 14);
+        end;
+    end;
+  end;
+
   procedure AssignBtnIcon(Btn: TSpeedButton; Kind: Integer);
   var
     Bmp: TBitmap;
     C: TCanvas;
-    PenCol: TColor;
   begin
     Bmp := TBitmap.Create;
     try
-      Bmp.SetSize(24, 24);
+      // สร้างไอคอน 2 สถานะ (ปกติ 24px ด้านซ้าย และปิดใช้งาน 24px ด้านขวา)
+      Bmp.SetSize(48, 24);
       Bmp.Transparent := True;
       Bmp.TransparentColor := clFuchsia;
       C := Bmp.Canvas;
       C.Brush.Color := clFuchsia;
-      C.FillRect(0, 0, 24, 24);
+      C.FillRect(0, 0, 48, 24);
 
-      PenCol := RGBToColor(68, 68, 68);
-      C.Pen.Color := PenCol;
-      C.Pen.Width := 2;
-      C.Brush.Style := bsClear;
+      DrawGlyphIcon(C, Kind, 0, RGBToColor(68, 68, 68));
+      DrawGlyphIcon(C, Kind, 24, RGBToColor(180, 180, 180));
 
-      case Kind of
-        1: // Open File (Page outline + up arrow)
-          begin
-            C.Polygon([Point(5, 3), Point(14, 3), Point(19, 8), Point(19, 21), Point(5, 21)]);
-            C.MoveTo(14, 3); C.LineTo(14, 8); C.LineTo(19, 8);
-            C.MoveTo(12, 18); C.LineTo(12, 10);
-            C.MoveTo(9, 13); C.LineTo(12, 10); C.LineTo(15, 13);
-          end;
-        2: // Open URL (Globe)
-          begin
-            C.Ellipse(3, 3, 21, 21);
-            C.Ellipse(8, 3, 16, 21);
-            C.MoveTo(3, 12); C.LineTo(21, 12);
-            C.MoveTo(5, 7); C.LineTo(19, 7);
-            C.MoveTo(5, 17); C.LineTo(19, 17);
-          end;
-        3: // Start (Play triangle)
-          begin
-            C.Polygon([Point(7, 4), Point(19, 12), Point(7, 20)]);
-          end;
-        4: // Pause (Two vertical bars)
-          begin
-            C.MoveTo(8, 5); C.LineTo(8, 19);
-            C.MoveTo(16, 5); C.LineTo(16, 19);
-          end;
-        5: // Remove (Horizontal minus line)
-          begin
-            C.MoveTo(4, 12); C.LineTo(20, 12);
-          end;
-        6: // Properties (Circle with 'i')
-          begin
-            C.Ellipse(3, 3, 21, 21);
-            C.MoveTo(12, 10); C.LineTo(12, 17);
-            C.Pixels[12, 7] := PenCol;
-            C.Pixels[11, 7] := PenCol;
-            C.Pixels[12, 6] := PenCol;
-          end;
-        7: // Web UI (Browser window with top bar)
-          begin
-            C.Rectangle(3, 4, 21, 20);
-            C.MoveTo(3, 9); C.LineTo(21, 9);
-            C.Pixels[6, 6] := PenCol;
-            C.Pixels[9, 6] := PenCol;
-            C.MoveTo(8, 14); C.LineTo(16, 14);
-          end;
-      end;
+      Btn.NumGlyphs := 2;
       Btn.Glyph.Assign(Bmp);
     finally
       Bmp.Free;
@@ -885,9 +908,11 @@ begin
   FEdtSearch.Left := FPnlFilterBar.Width - 235;
   FEdtSearch.Top := 5;
   FEdtSearch.Width := 227;
-  FEdtSearch.Anchors := [akTop, akRight];
   FEdtSearch.TextHint := 'Search...';
   FEdtSearch.OnChange := @FilterControlChange;
+
+  FPnlFilterBar.OnResize := @FilterBarResize;
+  FilterBarResize(FPnlFilterBar);
 end;
 
 procedure TMainForm.BuildStatusBar;
@@ -945,7 +970,6 @@ begin
   FBtnStatsMode.Width := 24;
   FBtnStatsMode.Height := 22;
   FBtnStatsMode.Flat := True;
-  FBtnStatsMode.Anchors := [akTop, akRight];
   FBtnStatsMode.Hint := 'Select Statistics Display Mode';
   FBtnStatsMode.ShowHint := True;
   FBtnStatsMode.OnClick := @ActStatsPopupClick;
@@ -956,7 +980,6 @@ begin
   FLblRatioInfo.Top := 6;
   FLblRatioInfo.Width := 122;
   FLblRatioInfo.Alignment := taRightJustify;
-  FLblRatioInfo.Anchors := [akTop, akRight];
   FLblRatioInfo.Caption := 'Ratio: 0.00';
 
   FLblUpSpeed := TLabel.Create(FPnlStatusBar);
@@ -965,7 +988,6 @@ begin
   FLblUpSpeed.Top := 6;
   FLblUpSpeed.Width := 95;
   FLblUpSpeed.Alignment := taRightJustify;
-  FLblUpSpeed.Anchors := [akTop, akRight];
   FLblUpSpeed.Caption := '';
 
   FLblDownSpeed := TLabel.Create(FPnlStatusBar);
@@ -974,8 +996,10 @@ begin
   FLblDownSpeed.Top := 6;
   FLblDownSpeed.Width := 95;
   FLblDownSpeed.Alignment := taRightJustify;
-  FLblDownSpeed.Anchors := [akTop, akRight];
   FLblDownSpeed.Caption := '';
+
+  FPnlStatusBar.OnResize := @StatusBarResize;
+  StatusBarResize(FPnlStatusBar);
 end;
 
 procedure TMainForm.BuildTorrentList;
@@ -992,6 +1016,7 @@ begin
   FLstTorrents.DoubleBuffered := True;
   FLstTorrents.PopupMenu := FTorrentPopup;
   FLstTorrents.OnDrawItem := @LstTorrentsDrawItem;
+  FLstTorrents.OnMouseDown := @LstTorrentsMouseDown;
   FLstTorrents.OnDblClick := @LstTorrentsDblClick;
   FLstTorrents.OnSelectionChange := @LstTorrentsSelectionChange;
   FLstTorrents.OnResize := @LstTorrentsResize;
@@ -1212,6 +1237,135 @@ begin
   FLstTorrents.Invalidate;
 end;
 
+procedure TMainForm.FilterBarResize(Sender: TObject);
+var
+  AvailW, SearchW: Integer;
+begin
+  if (FPnlFilterBar = nil) or (FEdtSearch = nil) then Exit;
+  AvailW := FPnlFilterBar.ClientWidth - 386;
+  SearchW := EnsureRange(AvailW, 100, 240);
+  FEdtSearch.Width := SearchW;
+  FEdtSearch.Left := Max(378, FPnlFilterBar.ClientWidth - SearchW - 8);
+end;
+
+procedure TMainForm.StatusBarResize(Sender: TObject);
+var
+  RightX: Integer;
+begin
+  if (FPnlStatusBar = nil) or (FBtnStatsMode = nil) then Exit;
+  RightX := FPnlStatusBar.ClientWidth - 4;
+  FBtnStatsMode.Left := RightX - FBtnStatsMode.Width;
+  RightX := FBtnStatsMode.Left - 8;
+
+  if FLblRatioInfo <> nil then
+  begin
+    FLblRatioInfo.Left := RightX - FLblRatioInfo.Width;
+    RightX := FLblRatioInfo.Left - 14;
+  end;
+
+  if (FLblUpSpeed <> nil) and (FLblUpSpeed.Caption <> '') then
+  begin
+    FLblUpSpeed.Left := RightX - FLblUpSpeed.Width;
+    RightX := FLblUpSpeed.Left - 14;
+  end;
+
+  if (FLblDownSpeed <> nil) and (FLblDownSpeed.Caption <> '') then
+    FLblDownSpeed.Left := RightX - FLblDownSpeed.Width;
+end;
+
+procedure TMainForm.FixTopBarOrder;
+begin
+  if (FPnlToolbar = nil) or (FPnlFilterBar = nil) then Exit;
+  DisableAlign;
+  try
+    FPnlToolbar.Top := 0;
+    FPnlFilterBar.Top := FPnlToolbar.Height + 1;
+  finally
+    EnableAlign;
+  end;
+end;
+
+procedure TMainForm.ApplyListItemHeight;
+var
+  I: Integer;
+begin
+  if FLstTorrents = nil then Exit;
+  SaveSelectedIds;
+  if FCompactView then
+    FLstTorrents.ItemHeight := 28
+  else
+    FLstTorrents.ItemHeight := 68;
+  for I := 0 to Min(FLstTorrents.Items.Count, FFilteredTorrents.Count) - 1 do
+    FLstTorrents.Items.Objects[I] := {%H-}TObject(PtrUInt(TTorrentItem(FFilteredTorrents[I]).Id));
+  RestoreSelectedIds;
+  UpdateActionStates;
+  FLstTorrents.Invalidate;
+end;
+
+procedure TMainForm.BeginModalPause;
+begin
+  Inc(FModalDepth);
+  if FTimerRefresh <> nil then
+    FTimerRefresh.Enabled := False;
+end;
+
+procedure TMainForm.EndModalPause;
+begin
+  if FModalDepth > 0 then
+    Dec(FModalDepth);
+  if (FModalDepth = 0) and (FTimerRefresh <> nil) then
+    FTimerRefresh.Enabled := True;
+end;
+
+procedure TMainForm.LstTorrentsMouseDown(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+var
+  Idx: Integer;
+begin
+  Idx := FLstTorrents.ItemAtPos(Point(X, Y), True);
+  if Button = mbRight then
+  begin
+    // คลิกขวาบนแถวที่ยังไม่ถูกเลือก: เลือกแถวนั้นทันทีเพื่อให้เมนูคลิกขวาทำงานกับทอร์เรนต์ที่ชี้ได้
+    if Idx >= 0 then
+    begin
+      if not FLstTorrents.Selected[Idx] then
+      begin
+        FLstTorrents.ClearSelection;
+        FLstTorrents.Selected[Idx] := True;
+      end;
+      FLstTorrents.ItemIndex := Idx;
+    end
+    else
+      FLstTorrents.ClearSelection;
+    SaveSelectedIds;
+    UpdateActionStates;
+  end
+  else if Button = mbLeft then
+  begin
+    if Idx < 0 then
+    begin
+      FLstTorrents.ClearSelection;
+      SaveSelectedIds;
+      UpdateActionStates;
+    end;
+  end;
+end;
+
+procedure TMainForm.TorrentPopupBefore(Sender: TObject);
+begin
+  UpdateActionStates;
+end;
+
+procedure TMainForm.TrayPopupBefore(Sender: TObject);
+var
+  I: Integer;
+begin
+  if FTrayPopup = nil then Exit;
+  for I := 0 to FTrayPopup.Items.Count - 1 do
+    if Pos('Alternative Speed', FTrayPopup.Items[I].Caption) > 0 then
+      FTrayPopup.Items[I].Checked := FSessionConfig.AltSpeedEnabled;
+end;
+
 procedure TMainForm.LstTorrentsKeyDown(Sender: TObject; var Key: Word;
   Shift: TShiftState);
 begin
@@ -1412,6 +1566,7 @@ procedure TMainForm.ApplyFilterAndSort;
 var
   I: Integer;
   T: TTorrentItem;
+  SameStructure: Boolean;
 begin
   SaveSelectedIds;
 
@@ -1427,30 +1582,128 @@ begin
   ActiveReverseSort := FReverseSort;
   FFilteredTorrents.Sort(@CompareTorrents);
 
-  FLstTorrents.Items.BeginUpdate;
-  try
-    while FLstTorrents.Items.Count < FFilteredTorrents.Count do
-      FLstTorrents.Items.Add('');
-    while FLstTorrents.Items.Count > FFilteredTorrents.Count do
-      FLstTorrents.Items.Delete(FLstTorrents.Items.Count - 1);
-    RestoreSelectedIds;
-  finally
-    FLstTorrents.Items.EndUpdate;
+  SameStructure := (FLstTorrents.Items.Count = FFilteredTorrents.Count);
+  if SameStructure then
+  begin
+    for I := 0 to FFilteredTorrents.Count - 1 do
+    begin
+      if {%H-}PtrUInt(FLstTorrents.Items.Objects[I]) <> PtrUInt(TTorrentItem(FFilteredTorrents[I]).Id) then
+      begin
+        SameStructure := False;
+        Break;
+      end;
+    end;
+  end;
+
+  // อัปเดตโครงสร้าง ListBox เฉพาะเมื่อจำนวนหรือลำดับ ID เปลี่ยน เพื่อไม่ให้รีเซ็ตการเลือก/เปิดเมนูขณะรีเฟรช
+  if not SameStructure then
+  begin
+    FLstTorrents.Items.BeginUpdate;
+    try
+      while FLstTorrents.Items.Count < FFilteredTorrents.Count do
+        FLstTorrents.Items.Add('');
+      while FLstTorrents.Items.Count > FFilteredTorrents.Count do
+        FLstTorrents.Items.Delete(FLstTorrents.Items.Count - 1);
+      for I := 0 to FFilteredTorrents.Count - 1 do
+        FLstTorrents.Items.Objects[I] := {%H-}TObject(PtrUInt(TTorrentItem(FFilteredTorrents[I]).Id));
+      RestoreSelectedIds;
+    finally
+      FLstTorrents.Items.EndUpdate;
+    end;
   end;
 
   FLstTorrents.Invalidate;
   UpdateActionStates;
 end;
 
+procedure TMainForm.UpdateTorrentMenuStates;
+  function SameClick(A, B: TNotifyEvent): Boolean;
+  begin
+    Result := (TMethod(A).Code = TMethod(B).Code) and (TMethod(A).Data = TMethod(B).Data);
+  end;
+
+  procedure SyncMenuItems(ParentItem: TMenuItem; HasSel, CanStart, CanPause, HasMagnet: Boolean);
+  var
+    I: Integer;
+    MI: TMenuItem;
+  begin
+    if ParentItem = nil then Exit;
+    for I := 0 to ParentItem.Count - 1 do
+    begin
+      MI := ParentItem.Items[I];
+      if MI.Caption = '-' then Continue;
+      if MI.Count > 0 then
+      begin
+        MI.Enabled := HasSel;
+        SyncMenuItems(MI, HasSel, CanStart, CanPause, HasMagnet);
+      end
+      else if SameClick(MI.OnClick, @ActStartSelected) or SameClick(MI.OnClick, @ActStartNowSelected) then
+        MI.Enabled := CanStart
+      else if SameClick(MI.OnClick, @ActPauseSelected) then
+        MI.Enabled := CanPause
+      else if SameClick(MI.OnClick, @ActCopyMagnet) then
+        MI.Enabled := HasMagnet
+      else
+        MI.Enabled := HasSel;
+    end;
+  end;
+var
+  I: Integer;
+  T: TTorrentItem;
+  HasSel, CanStart, CanPause, HasMagnet: Boolean;
+begin
+  HasSel := False;
+  CanStart := False;
+  CanPause := False;
+  HasMagnet := False;
+
+  for I := 0 to FLstTorrents.Items.Count - 1 do
+  begin
+    if FLstTorrents.Selected[I] and (I < FFilteredTorrents.Count) then
+    begin
+      HasSel := True;
+      T := TTorrentItem(FFilteredTorrents[I]);
+      if T.IsPaused or (T.Status = TR_STATUS_DOWNLOAD_WAIT) or (T.Status = TR_STATUS_SEED_WAIT) then
+        CanStart := True;
+      if not T.IsPaused then
+        CanPause := True;
+      if T.MagnetLink <> '' then
+        HasMagnet := True;
+    end;
+  end;
+
+  SyncMenuItems(MnuTorrent, HasSel, CanStart, CanPause, HasMagnet);
+  if FTorrentPopup <> nil then
+    SyncMenuItems(FTorrentPopup.Items, HasSel, CanStart, CanPause, HasMagnet);
+end;
+
 procedure TMainForm.UpdateActionStates;
 var
-  HasSel: Boolean;
+  I: Integer;
+  T: TTorrentItem;
+  HasSel, CanStart, CanPause: Boolean;
 begin
-  HasSel := Length(GetSelectedTorrentIds) > 0;
-  FBtnStart.Enabled := HasSel;
-  FBtnPause.Enabled := HasSel;
+  HasSel := False;
+  CanStart := False;
+  CanPause := False;
+  for I := 0 to FLstTorrents.Items.Count - 1 do
+  begin
+    if FLstTorrents.Selected[I] and (I < FFilteredTorrents.Count) then
+    begin
+      HasSel := True;
+      T := TTorrentItem(FFilteredTorrents[I]);
+      if T.IsPaused or (T.Status = TR_STATUS_DOWNLOAD_WAIT) or (T.Status = TR_STATUS_SEED_WAIT) then
+        CanStart := True;
+      if not T.IsPaused then
+        CanPause := True;
+    end;
+  end;
+
+  FBtnStart.Enabled := CanStart;
+  FBtnPause.Enabled := CanPause;
   FBtnRemove.Enabled := HasSel;
   FBtnProperties.Enabled := HasSel;
+  UpdateTorrentMenuStates;
 end;
 
 procedure TMainForm.UpdateStatusBarText;
@@ -1518,6 +1771,7 @@ begin
       FLblRatioInfo.Caption := Format('D: %s  U: %s',
         [FormatSize(FSessionStats.CurrentDownloadedBytes), FormatSize(FSessionStats.CurrentUploadedBytes)]);
   end;
+  StatusBarResize(FPnlStatusBar);
 end;
 
 procedure TMainForm.CheckCompletedNotifications;
@@ -1551,7 +1805,10 @@ procedure TMainForm.RefreshFromRpc;
 var
   NewList: TList;
   I: Integer;
+  PrevAlt: Boolean;
+  FreshSession: TSessionConfig;
 begin
+  if FModalDepth > 0 then Exit;
   SaveSelectedIds;
   NewList := TList.Create;
   try
@@ -1562,6 +1819,17 @@ begin
         FAllTorrents.Add(NewList[I]);
       NewList.Clear;
       FRpc.FetchSessionStats(FSessionStats);
+      Inc(FSessionSyncCounter);
+      if (FSessionSyncCounter mod 4) = 0 then
+      begin
+        PrevAlt := FSessionConfig.AltSpeedEnabled;
+        if FRpc.FetchSession(FreshSession) then
+        begin
+          FSessionConfig := FreshSession;
+          if FSessionConfig.AltSpeedEnabled <> PrevAlt then
+            RenderStatusBarIcons;
+        end;
+      end;
       CheckCompletedNotifications;
       UpdateStateFilterCounts;
       RebuildTrackerFilterList;
@@ -1608,24 +1876,29 @@ var
   StartNow, TrashFile: Boolean;
   Unwanted: TIntegerDynArray;
 begin
-  for I := Low(FileNames) to High(FileNames) do
-  begin
-    if SameText(ExtractFileExt(FileNames[I]), '.torrent') then
+  BeginModalPause;
+  try
+    for I := Low(FileNames) to High(FileNames) do
     begin
-      if ShowOpenTorrentDialog(Self, FRpc, FileNames[I], FSessionConfig.DownloadDir,
-           FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
+      if SameText(ExtractFileExt(FileNames[I]), '.torrent') then
       begin
-        if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
+        if ShowOpenTorrentDialog(Self, FRpc, FileNames[I], FSessionConfig.DownloadDir,
+             FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
         begin
-          if TrashFile then
-            DeleteFile(SelFile);
-          RefreshFromRpc;
-        end
-        else
-          MessageDlg('Failed to add torrent: ' + FRpc.LastError, mtError, [mbOK], 0);
+          if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
+          begin
+            if TrashFile then
+              DeleteFile(SelFile);
+          end
+          else
+            MessageDlg('Failed to add torrent: ' + FRpc.LastError, mtError, [mbOK], 0);
+        end;
       end;
     end;
+  finally
+    EndModalPause;
   end;
+  RefreshFromRpc;
 end;
 
 procedure TMainForm.ActOpenFile(Sender: TObject);
@@ -1636,28 +1909,33 @@ var
   Pri: Integer;
   Unwanted: TIntegerDynArray;
 begin
-  Dlg := TOpenDialog.Create(Self);
+  BeginModalPause;
   try
-    Dlg.Title := 'Open Torrent File';
-    Dlg.Filter := 'Torrent Files (*.torrent)|*.torrent|All Files (*.*)|*.*';
-    if not Dlg.Execute then Exit;
-    SelFile := Dlg.FileName;
-  finally
-    Dlg.Free;
-  end;
+    Dlg := TOpenDialog.Create(Self);
+    try
+      Dlg.Title := 'Open Torrent File';
+      Dlg.Filter := 'Torrent Files (*.torrent)|*.torrent|All Files (*.*)|*.*';
+      if not Dlg.Execute then Exit;
+      SelFile := Dlg.FileName;
+    finally
+      Dlg.Free;
+    end;
 
-  if ShowOpenTorrentDialog(Self, FRpc, SelFile, FSessionConfig.DownloadDir,
-       FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
-  begin
-    if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
+    if ShowOpenTorrentDialog(Self, FRpc, SelFile, FSessionConfig.DownloadDir,
+         FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
     begin
-      if TrashFile then
-        DeleteFile(SelFile);
-      RefreshFromRpc;
-    end
-    else
-      MessageDlg('Failed to add torrent: ' + FRpc.LastError, mtError, [mbOK], 0);
+      if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
+      begin
+        if TrashFile then
+          DeleteFile(SelFile);
+      end
+      else
+        MessageDlg('Failed to add torrent: ' + FRpc.LastError, mtError, [mbOK], 0);
+    end;
+  finally
+    EndModalPause;
   end;
+  RefreshFromRpc;
 end;
 
 procedure TMainForm.ActOpenUrl(Sender: TObject);
@@ -1666,19 +1944,31 @@ var
   StartNow: Boolean;
   Pri: Integer;
 begin
-  if ShowAddUrlDialog(Self, FRpc, FSessionConfig.DownloadDir,
-       FSessionConfig.StartAddedTorrents, UrlStr, DestDir, StartNow, Pri) then
-  begin
-    if FRpc.AddTorrentUrl(UrlStr, DestDir, StartNow, Pri, AddedName) then
-      RefreshFromRpc
-    else
-      MessageDlg('Failed to add URL/Magnet: ' + FRpc.LastError, mtError, [mbOK], 0);
+  BeginModalPause;
+  try
+    if ShowAddUrlDialog(Self, FRpc, FSessionConfig.DownloadDir,
+         FSessionConfig.StartAddedTorrents, UrlStr, DestDir, StartNow, Pri) then
+    begin
+      if not FRpc.AddTorrentUrl(UrlStr, DestDir, StartNow, Pri, AddedName) then
+        MessageDlg('Failed to add URL/Magnet: ' + FRpc.LastError, mtError, [mbOK], 0);
+    end;
+  finally
+    EndModalPause;
   end;
+  RefreshFromRpc;
 end;
 
 procedure TMainForm.ActNewTorrent(Sender: TObject);
+var
+  Ok: Boolean;
 begin
-  if ShowMakeTorrentDialog(Self, FRpc) then
+  BeginModalPause;
+  try
+    Ok := ShowMakeTorrentDialog(Self, FRpc);
+  finally
+    EndModalPause;
+  end;
+  if Ok then
     RefreshFromRpc;
 end;
 
@@ -1730,13 +2020,16 @@ var
 begin
   Ids := GetSelectedTorrentIds;
   if Length(Ids) = 0 then Exit;
-  if MessageDlg('Remove Torrent',
-       Format('Remove %d selected torrent(s) from the list?', [Length(Ids)]),
-       mtConfirmation, [mbYes, mbNo], 0) = mrYes then
-  begin
-    FRpc.RemoveTorrents(Ids, False);
-    RefreshFromRpc;
+  BeginModalPause;
+  try
+    if MessageDlg('Remove Torrent',
+         Format('Remove %d selected torrent(s) from the list?', [Length(Ids)]),
+         mtConfirmation, [mbYes, mbNo], 0) = mrYes then
+      FRpc.RemoveTorrents(Ids, False);
+  finally
+    EndModalPause;
   end;
+  RefreshFromRpc;
 end;
 
 procedure TMainForm.ActDeleteSelected(Sender: TObject);
@@ -1745,13 +2038,16 @@ var
 begin
   Ids := GetSelectedTorrentIds;
   if Length(Ids) = 0 then Exit;
-  if MessageDlg('Delete Files and Remove',
-       Format('Remove %d selected torrent(s) AND permanently delete their downloaded files?', [Length(Ids)]),
-       mtWarning, [mbYes, mbNo], 0) = mrYes then
-  begin
-    FRpc.RemoveTorrents(Ids, True);
-    RefreshFromRpc;
+  BeginModalPause;
+  try
+    if MessageDlg('Delete Files and Remove',
+         Format('Remove %d selected torrent(s) AND permanently delete their downloaded files?', [Length(Ids)]),
+         mtWarning, [mbYes, mbNo], 0) = mrYes then
+      FRpc.RemoveTorrents(Ids, True);
+  finally
+    EndModalPause;
   end;
+  RefreshFromRpc;
 end;
 
 procedure TMainForm.ActProperties(Sender: TObject);
@@ -1760,7 +2056,12 @@ var
 begin
   T := GetFirstSelectedTorrent;
   if T = nil then Exit;
-  ShowDetailsDialog(Self, FRpc, T);
+  BeginModalPause;
+  try
+    ShowDetailsDialog(Self, FRpc, T);
+  finally
+    EndModalPause;
+  end;
   RefreshFromRpc;
 end;
 
@@ -1771,9 +2072,19 @@ var
 begin
   T := GetFirstSelectedTorrent;
   if T = nil then Exit;
-  FolderPath := StringReplace(T.DownloadDir, '/', '\', [rfReplaceAll]);
-  if DirectoryExists(FolderPath) then
-    OpenDocument(FolderPath);
+  FolderPath := ExcludeTrailingPathDelimiter(StringReplace(T.DownloadDir, '/', '\', [rfReplaceAll]));
+  if FolderPath = '' then
+  begin
+    MessageDlg('Open Folder', 'No download folder is specified for this torrent.', mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  if not DirectoryExists(FolderPath) then
+  begin
+    MessageDlg('Open Folder', 'Folder does not exist yet:' + LineEnding + FolderPath, mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  if not OpenDocument(FolderPath) then
+    MessageDlg('Open Folder', 'Could not open folder:' + LineEnding + FolderPath, mtWarning, [mbOK], 0);
 end;
 
 procedure TMainForm.ActVerifySelected(Sender: TObject);
@@ -1801,12 +2112,18 @@ var
   Ids: TIntegerDynArray;
   T: TTorrentItem;
   NewDir: string;
-  MoveData: Boolean;
+  MoveData, Ok: Boolean;
 begin
   Ids := GetSelectedTorrentIds;
   T := GetFirstSelectedTorrent;
   if (Length(Ids) = 0) or (T = nil) then Exit;
-  if ShowRelocateDialog(Self, T.DownloadDir, NewDir, MoveData) then
+  BeginModalPause;
+  try
+    Ok := ShowRelocateDialog(Self, T.DownloadDir, NewDir, MoveData);
+  finally
+    EndModalPause;
+  end;
+  if Ok then
   begin
     FRpc.SetTorrentLocation(Ids, NewDir, MoveData);
     RefreshFromRpc;
@@ -1818,8 +2135,11 @@ var
   T: TTorrentItem;
 begin
   T := GetFirstSelectedTorrent;
-  if (T <> nil) and (T.MagnetLink <> '') then
-    Clipboard.AsText := T.MagnetLink;
+  if T = nil then Exit;
+  if T.MagnetLink <> '' then
+    Clipboard.AsText := T.MagnetLink
+  else
+    MessageDlg('Copy Magnet Link', 'No magnet link is available for "' + T.Name + '".', mtInformation, [mbOK], 0);
 end;
 
 procedure TMainForm.ActQueueMove(Sender: TObject);
@@ -1856,8 +2176,16 @@ begin
 end;
 
 procedure TMainForm.ActChangeSession(Sender: TObject);
+var
+  Ok: Boolean;
 begin
-  if ShowSessionDialog(Self, FRpc) then
+  BeginModalPause;
+  try
+    Ok := ShowSessionDialog(Self, FRpc);
+  finally
+    EndModalPause;
+  end;
+  if Ok then
   begin
     FRpc.FetchSession(FSessionConfig);
     RenderStatusBarIcons;
@@ -1867,8 +2195,16 @@ begin
 end;
 
 procedure TMainForm.ActPreferences(Sender: TObject);
+var
+  Ok: Boolean;
 begin
-  if ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig) then
+  BeginModalPause;
+  try
+    Ok := ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig);
+  finally
+    EndModalPause;
+  end;
+  if Ok then
   begin
     RenderStatusBarIcons;
     RefreshFromRpc;
@@ -1880,11 +2216,7 @@ procedure TMainForm.ActToggleCompactView(Sender: TObject);
 begin
   FCompactView := not FCompactView;
   MiCompactView.Checked := FCompactView;
-  if FCompactView then
-    FLstTorrents.ItemHeight := 28
-  else
-    FLstTorrents.ItemHeight := 68;
-  FLstTorrents.Invalidate;
+  ApplyListItemHeight;
   SaveAppSettings;
 end;
 
@@ -1892,6 +2224,7 @@ procedure TMainForm.ActToggleToolbar(Sender: TObject);
 begin
   FPnlToolbar.Visible := not FPnlToolbar.Visible;
   MiToolbar.Checked := FPnlToolbar.Visible;
+  FixTopBarOrder;
   SaveAppSettings;
 end;
 
@@ -1899,6 +2232,7 @@ procedure TMainForm.ActToggleFilterbar(Sender: TObject);
 begin
   FPnlFilterBar.Visible := not FPnlFilterBar.Visible;
   MiFilterbar.Checked := FPnlFilterBar.Visible;
+  FixTopBarOrder;
   SaveAppSettings;
 end;
 
@@ -1946,24 +2280,44 @@ end;
 procedure TMainForm.ActOpenWebUi(Sender: TObject);
 begin
   if FWebServer <> nil then
-    OpenURL(FWebServer.GetWebUrl)
+  begin
+    if FWebServer.Enabled and (not FWebServer.IsRunning) then
+      FWebServer.RestartServer;
+    if FWebServer.Enabled and (not FWebServer.IsRunning) and (FWebServer.LastError <> '') then
+    begin
+      MessageDlg('Web Interface', 'Embedded Web Server failed to start on port ' +
+        IntToStr(FWebServer.Port) + ':' + LineEnding + FWebServer.LastError, mtWarning, [mbOK], 0);
+      Exit;
+    end;
+    OpenURL(FWebServer.GetWebUrl);
+  end
   else
     OpenURL('http://127.0.0.1:9091/');
 end;
 
 procedure TMainForm.ActShowStatistics(Sender: TObject);
 begin
-  ShowStatsDialog(Self, FRpc);
+  BeginModalPause;
+  try
+    ShowStatsDialog(Self, FRpc);
+  finally
+    EndModalPause;
+  end;
 end;
 
 procedure TMainForm.ActShowAbout(Sender: TObject);
 begin
-  MessageDlg('About Transmission',
-    'Transmission 4.2.0-dev (Lazarus Pascal Edition)' + LineEnding +
-    'A fast and easy BitTorrent client' + LineEnding + LineEnding +
-    'Backend Engine: ' + FSessionConfig.Version + LineEnding +
-    'Frontend: Lazarus / FreePascal LCL',
-    mtInformation, [mbOK], 0);
+  BeginModalPause;
+  try
+    MessageDlg('About Transmission',
+      'Transmission 4.2.0-dev (Lazarus Pascal Edition)' + LineEnding +
+      'A fast and easy BitTorrent client' + LineEnding + LineEnding +
+      'Backend Engine: ' + FSessionConfig.Version + LineEnding +
+      'Frontend: Lazarus / FreePascal LCL',
+      mtInformation, [mbOK], 0);
+  finally
+    EndModalPause;
+  end;
 end;
 
 procedure TMainForm.ActStatsModeClick(Sender: TObject);
@@ -1976,7 +2330,11 @@ end;
 procedure TMainForm.ActOptionsPopupClick(Sender: TObject);
 var
   P: TPoint;
+  I: Integer;
 begin
+  for I := 0 to FOptionsPopup.Items.Count - 1 do
+    if Pos('Compact View', FOptionsPopup.Items[I].Caption) > 0 then
+      FOptionsPopup.Items[I].Checked := FCompactView;
   P := FBtnOptionsMenu.ClientToScreen(Point(0, FBtnOptionsMenu.Height));
   FOptionsPopup.PopUp(P.X, P.Y);
 end;
@@ -1984,8 +2342,11 @@ end;
 procedure TMainForm.ActStatsPopupClick(Sender: TObject);
 var
   P: TPoint;
+  I: Integer;
 begin
-  P := FBtnStatsMode.ClientToScreen(Point(0, FBtnStatsMode.Height));
+  for I := 0 to FStatsPopup.Items.Count - 1 do
+    FStatsPopup.Items[I].Checked := (FStatsPopup.Items[I].Tag = Ord(FStatsMode));
+  P := FBtnStatsMode.ClientToScreen(Point(FBtnStatsMode.Width, FBtnStatsMode.Height));
   FStatsPopup.PopUp(P.X, P.Y);
 end;
 

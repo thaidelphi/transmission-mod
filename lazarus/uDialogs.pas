@@ -217,7 +217,7 @@ begin
 
     F.LblTorrentSummary := TLabel.Create(F);
     F.LblTorrentSummary.Parent := F;
-    F.LblTorrentSummary.Left := 115; Lbl.Top := 14;
+    F.LblTorrentSummary.Left := 115;
     F.LblTorrentSummary.Top := 14;
     F.LblTorrentSummary.Font.Style := [fsBold];
     F.LblTorrentSummary.Caption := '';

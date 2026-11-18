@@ -49,6 +49,8 @@ type
 
     { คืนค่า URL สำหรับเปิดหน้าเว็บในเบราว์เซอร์ เช่น "http://127.0.0.1:9092/" }
     function GetWebUrl: string;
+    function IsRunning: Boolean;
+    function LastError: string;
 
     property Port: Word read FPort write FPort;
     property Enabled: Boolean read FEnabled write FEnabled;
@@ -61,12 +63,16 @@ type
   TWebServerThread = class(TThread)
   private
     FServer: TFPHTTPServer;
+    FRunning: Boolean;
+    FLastError: string;
   protected
     procedure Execute; override;
   public
     constructor Create(APort: Word; AHandler: THTTPServerRequestHandler);
     destructor Destroy; override;
     procedure StopHttp;
+    property Running: Boolean read FRunning;
+    property LastError: string read FLastError;
   end;
 
 implementation
@@ -77,6 +83,8 @@ constructor TWebServerThread.Create(APort: Word; AHandler: THTTPServerRequestHan
 begin
   inherited Create(True);
   FreeOnTerminate := False;
+  FRunning := False;
+  FLastError := '';
   FServer := TFPHTTPServer.Create(nil);
   FServer.Port := APort;
   FServer.Threaded := True;
@@ -93,10 +101,15 @@ end;
 
 procedure TWebServerThread.Execute;
 begin
+  FRunning := True;
+  FLastError := '';
   try
     FServer.Active := True;
   except
+    on E: Exception do
+      FLastError := E.Message;
   end;
+  FRunning := False;
 end;
 
 procedure TWebServerThread.StopHttp;
@@ -108,6 +121,7 @@ begin
     except
     end;
   end;
+  FRunning := False;
 end;
 
 { TTransmissionWebServer }
@@ -164,6 +178,19 @@ begin
     Result := Format('http://127.0.0.1:%d/', [FPort])
   else
     Result := Format('http://%s:%d/', [FRpc.Host, FRpc.Port]);
+end;
+
+function TTransmissionWebServer.IsRunning: Boolean;
+begin
+  Result := (FThread <> nil) and FThread.Running;
+end;
+
+function TTransmissionWebServer.LastError: string;
+begin
+  if FThread <> nil then
+    Result := FThread.LastError
+  else
+    Result := '';
 end;
 
 { ค้นหาไฟล์ HTML ของหน้าเว็บ Web UI จากโฟลเดอร์ `web_ui/index.html` }
