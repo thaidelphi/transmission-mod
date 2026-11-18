@@ -91,12 +91,27 @@ type
     EdtRatioLimit: TEdit;
     SpnPeerLimit: TSpinEdit;
 
+    // Speed Graph Tab
+    TsSpeedGraphTab: TTabSheet;
+    RbGraphTorrent: TRadioButton;
+    RbGraphGlobal: TRadioButton;
+    LblGraphStats: TLabel;
+    PbSpeedGraph: TPaintBox;
+    FGlobalDownHist: array of Int64;
+    FGlobalUpHist: array of Int64;
+    FTorrentDownHist: array of Int64;
+    FTorrentUpHist: array of Int64;
+
     procedure BuildTabs;
     procedure NotifyModalStart;
     procedure NotifyModalEnd;
     procedure NotifyDataChanged;
     procedure SyncOptionsAndInfo;
     procedure UpdateDynamicViews;
+    procedure UpdateGraphStatsLabel;
+    procedure PbSpeedGraphPaint(Sender: TObject);
+    procedure GraphSourceChange(Sender: TObject);
+    procedure BtnGraphClearClick(Sender: TObject);
 
     procedure BtnApplyOptionsClick(Sender: TObject);
     procedure BtnApplyFilesClick(Sender: TObject);
@@ -116,6 +131,7 @@ type
 
     procedure LoadTorrent(ATorrentId: Integer);
     procedure RefreshDetails;
+    procedure RecordGlobalSpeed(DownRate, UpRate: Int64);
 
     property CurrentTorrentId: Integer read FCurrentId;
     property PageControl: TPageControl read FPageControl;
@@ -1261,6 +1277,52 @@ begin
   BtnApplyOpt.Left := 20; BtnApplyOpt.Top := 196; BtnApplyOpt.Width := 130; BtnApplyOpt.Height := 28;
   BtnApplyOpt.Caption := 'Apply Options';
   BtnApplyOpt.OnClick := @BtnApplyOptionsClick;
+
+  // Tab 7: Speed Graph (กราฟความเร็วเรียลไทม์ Down/Up)
+  TsSpeedGraphTab := FPageControl.AddTabSheet;
+  TsSpeedGraphTab.Caption := 'Speed Graph';
+
+  PnlTrkBtns := TPanel.Create(TsSpeedGraphTab); // แถบควบคุมด้านบนของกราฟ
+  PnlTrkBtns.Parent := TsSpeedGraphTab;
+  PnlTrkBtns.Align := alTop;
+  PnlTrkBtns.Height := 30;
+  PnlTrkBtns.BevelOuter := bvNone;
+
+  RbGraphTorrent := TRadioButton.Create(PnlTrkBtns);
+  RbGraphTorrent.Parent := PnlTrkBtns;
+  RbGraphTorrent.Left := 8; RbGraphTorrent.Top := 6;
+  RbGraphTorrent.Caption := 'Selected Torrent';
+  RbGraphTorrent.Checked := True;
+  RbGraphTorrent.OnChange := @GraphSourceChange;
+
+  RbGraphGlobal := TRadioButton.Create(PnlTrkBtns);
+  RbGraphGlobal.Parent := PnlTrkBtns;
+  RbGraphGlobal.Left := 132; RbGraphGlobal.Top := 6;
+  RbGraphGlobal.Caption := 'All Torrents (Global)';
+  RbGraphGlobal.OnChange := @GraphSourceChange;
+
+  BtnToggleTrk := TButton.Create(PnlTrkBtns);
+  BtnToggleTrk.Parent := PnlTrkBtns;
+  BtnToggleTrk.Left := 280; BtnToggleTrk.Top := 3; BtnToggleTrk.Width := 56; BtnToggleTrk.Height := 24;
+  BtnToggleTrk.Caption := 'Reset';
+  BtnToggleTrk.OnClick := @BtnGraphClearClick;
+
+  LblGraphStats := TLabel.Create(PnlTrkBtns);
+  LblGraphStats.Parent := PnlTrkBtns;
+  LblGraphStats.Left := 346; LblGraphStats.Top := 7;
+  LblGraphStats.Caption := 'Down: 0 B/s | Up: 0 B/s';
+
+  PnlFileBtns := TPanel.Create(TsSpeedGraphTab); // พาเนลพื้นหลังกราฟแบบ DoubleBuffered ป้องกันการกระพริบ
+  PnlFileBtns.Parent := TsSpeedGraphTab;
+  PnlFileBtns.Align := alClient;
+  PnlFileBtns.BevelOuter := bvNone;
+  PnlFileBtns.DoubleBuffered := True;
+  PnlFileBtns.Color := RGBToColor(20, 24, 32);
+
+  PbSpeedGraph := TPaintBox.Create(PnlFileBtns);
+  PbSpeedGraph.Parent := PnlFileBtns;
+  PbSpeedGraph.Align := alClient;
+  PbSpeedGraph.OnPaint := @PbSpeedGraphPaint;
 end;
 
 procedure TDetailsPanel.SyncOptionsAndInfo;
@@ -1291,12 +1353,293 @@ begin
   SpnPeerLimit.Value := FOwnedTorrent.PeerLimit;
 end;
 
+const
+  MAX_GRAPH_SAMPLES = 120;
+
+procedure PushSpeedSample(var ArrDown, ArrUp: specialize TArray<Int64>; DownVal, UpVal: Int64);
+var
+  Len, I: Integer;
+begin
+  if DownVal < 0 then DownVal := 0;
+  if UpVal < 0 then UpVal := 0;
+  Len := Length(ArrDown);
+  if Len < MAX_GRAPH_SAMPLES then
+  begin
+    SetLength(ArrDown, Len + 1);
+    SetLength(ArrUp, Len + 1);
+    ArrDown[Len] := DownVal;
+    ArrUp[Len] := UpVal;
+  end
+  else
+  begin
+    for I := 0 to Len - 2 do
+    begin
+      ArrDown[I] := ArrDown[I + 1];
+      ArrUp[I] := ArrUp[I + 1];
+    end;
+    ArrDown[Len - 1] := DownVal;
+    ArrUp[Len - 1] := UpVal;
+  end;
+end;
+
+function SnapGraphScaleMax(PeakVal: Int64): Int64;
+const
+  STEPS: array[0..11] of Int64 = (
+    10 * 1024,          // 10 KB/s
+    50 * 1024,          // 50 KB/s
+    100 * 1024,         // 100 KB/s
+    250 * 1024,         // 250 KB/s
+    500 * 1024,         // 500 KB/s
+    1024 * 1024,        // 1 MB/s
+    2 * 1024 * 1024,    // 2 MB/s
+    5 * 1024 * 1024,    // 5 MB/s
+    10 * 1024 * 1024,   // 10 MB/s
+    25 * 1024 * 1024,   // 25 MB/s
+    50 * 1024 * 1024,   // 50 MB/s
+    100 * 1024 * 1024   // 100 MB/s
+  );
+var
+  I: Integer;
+begin
+  for I := Low(STEPS) to High(STEPS) do
+    if PeakVal <= STEPS[I] then
+      Exit(STEPS[I]);
+  Result := ((PeakVal div (50 * 1024 * 1024)) + 1) * (50 * 1024 * 1024);
+end;
+
+procedure TDetailsPanel.RecordGlobalSpeed(DownRate, UpRate: Int64);
+begin
+  PushSpeedSample(FGlobalDownHist, FGlobalUpHist, DownRate, UpRate);
+  if (RbGraphGlobal <> nil) and RbGraphGlobal.Checked then
+  begin
+    UpdateGraphStatsLabel;
+    if (PbSpeedGraph <> nil) and (FPageControl <> nil) and (FPageControl.ActivePage = TsSpeedGraphTab) then
+      PbSpeedGraph.Invalidate;
+  end;
+end;
+
+procedure TDetailsPanel.GraphSourceChange(Sender: TObject);
+begin
+  UpdateGraphStatsLabel;
+  if PbSpeedGraph <> nil then
+    PbSpeedGraph.Invalidate;
+end;
+
+procedure TDetailsPanel.BtnGraphClearClick(Sender: TObject);
+begin
+  if (RbGraphGlobal <> nil) and RbGraphGlobal.Checked then
+  begin
+    SetLength(FGlobalDownHist, 0);
+    SetLength(FGlobalUpHist, 0);
+  end
+  else
+  begin
+    SetLength(FTorrentDownHist, 0);
+    SetLength(FTorrentUpHist, 0);
+  end;
+  UpdateGraphStatsLabel;
+  if PbSpeedGraph <> nil then
+    PbSpeedGraph.Invalidate;
+end;
+
+procedure TDetailsPanel.UpdateGraphStatsLabel;
+var
+  I, Cnt: Integer;
+  SumD, SumU, PeakD, PeakU, CurD, CurU: Int64;
+  UseGlobal: Boolean;
+begin
+  if LblGraphStats = nil then Exit;
+  UseGlobal := (RbGraphGlobal <> nil) and RbGraphGlobal.Checked;
+  if UseGlobal then
+    Cnt := Length(FGlobalDownHist)
+  else
+    Cnt := Length(FTorrentDownHist);
+
+  if Cnt = 0 then
+  begin
+    LblGraphStats.Caption := 'Down: 0 B/s | Up: 0 B/s';
+    Exit;
+  end;
+
+  SumD := 0; SumU := 0; PeakD := 0; PeakU := 0; CurD := 0; CurU := 0;
+  for I := 0 to Cnt - 1 do
+  begin
+    if UseGlobal then
+    begin
+      CurD := FGlobalDownHist[I];
+      CurU := FGlobalUpHist[I];
+    end
+    else
+    begin
+      CurD := FTorrentDownHist[I];
+      CurU := FTorrentUpHist[I];
+    end;
+    Inc(SumD, CurD);
+    Inc(SumU, CurU);
+    if CurD > PeakD then PeakD := CurD;
+    if CurU > PeakU then PeakU := CurU;
+  end;
+  LblGraphStats.Caption := Format('Down: %s (Peak %s, Avg %s) | Up: %s (Peak %s)',
+    [FormatSpeed(CurD), FormatSpeed(PeakD), FormatSpeed(SumD div Cnt),
+     FormatSpeed(CurU), FormatSpeed(PeakU)]);
+end;
+
+procedure TDetailsPanel.PbSpeedGraphPaint(Sender: TObject);
+const
+  PAD_L = 12;
+  PAD_R = 76;
+  PAD_T = 12;
+  PAD_B = 14;
+var
+  C: TCanvas;
+  W, H, GW, GH, I, Cnt, StartIdx: Integer;
+  MaxRate, PeakVal, ValD, ValU: Int64;
+  UseGlobal: Boolean;
+  PtsDown, PtsUp, PolyDown: array of TPoint;
+  YVal: Int64;
+  YPos, XPos: Integer;
+  LabelTxt: string;
+begin
+  if PbSpeedGraph = nil then Exit;
+  C := PbSpeedGraph.Canvas;
+  W := PbSpeedGraph.Width;
+  H := PbSpeedGraph.Height;
+
+  C.Brush.Color := RGBToColor(20, 24, 32);
+  C.FillRect(0, 0, W, H);
+
+  GW := W - PAD_L - PAD_R;
+  GH := H - PAD_T - PAD_B;
+  if (GW < 40) or (GH < 30) then Exit;
+
+  UseGlobal := (RbGraphGlobal <> nil) and RbGraphGlobal.Checked;
+  if UseGlobal then
+    Cnt := Length(FGlobalDownHist)
+  else
+    Cnt := Length(FTorrentDownHist);
+
+  PeakVal := 0;
+  for I := 0 to Cnt - 1 do
+  begin
+    if UseGlobal then
+    begin
+      ValD := FGlobalDownHist[I];
+      ValU := FGlobalUpHist[I];
+    end
+    else
+    begin
+      ValD := FTorrentDownHist[I];
+      ValU := FTorrentUpHist[I];
+    end;
+    if ValD > PeakVal then PeakVal := ValD;
+    if ValU > PeakVal then PeakVal := ValU;
+  end;
+  MaxRate := SnapGraphScaleMax(PeakVal);
+
+  // Grid lines & right Y-axis labels
+  C.Font.Size := 8;
+  C.Font.Color := RGBToColor(156, 166, 184);
+  for I := 0 to 4 do
+  begin
+    YPos := PAD_T + Round((GH * (4 - I)) / 4);
+    C.Pen.Color := RGBToColor(44, 52, 66);
+    C.Pen.Style := psSolid;
+    C.Pen.Width := 1;
+    C.MoveTo(PAD_L, YPos);
+    C.LineTo(PAD_L + GW, YPos);
+
+    YVal := (MaxRate * I) div 4;
+    LabelTxt := FormatSpeed(YVal);
+    C.Brush.Style := bsClear;
+    C.TextOut(PAD_L + GW + 6, YPos - 7, LabelTxt);
+  end;
+
+  // Vertical time gridlines
+  for I := 1 to 5 do
+  begin
+    XPos := PAD_L + Round((GW * I) / 6);
+    C.Pen.Color := RGBToColor(34, 40, 52);
+    C.MoveTo(XPos, PAD_T);
+    C.LineTo(XPos, PAD_T + GH);
+  end;
+
+  // Frame border
+  C.Pen.Color := RGBToColor(58, 68, 86);
+  C.Brush.Style := bsClear;
+  C.Rectangle(PAD_L, PAD_T, PAD_L + GW + 1, PAD_T + GH + 1);
+
+  if Cnt >= 2 then
+  begin
+    SetLength(PtsDown, Cnt);
+    SetLength(PtsUp, Cnt);
+    StartIdx := MAX_GRAPH_SAMPLES - Cnt;
+    for I := 0 to Cnt - 1 do
+    begin
+      XPos := PAD_L + Round(((StartIdx + I) * GW) / (MAX_GRAPH_SAMPLES - 1));
+      if UseGlobal then
+      begin
+        ValD := FGlobalDownHist[I];
+        ValU := FGlobalUpHist[I];
+      end
+      else
+      begin
+        ValD := FTorrentDownHist[I];
+        ValU := FTorrentUpHist[I];
+      end;
+      PtsDown[I].X := XPos;
+      PtsDown[I].Y := PAD_T + GH - Round((EnsureRange(ValD, 0, MaxRate) * GH) / MaxRate);
+      PtsUp[I].X := XPos;
+      PtsUp[I].Y := PAD_T + GH - Round((EnsureRange(ValU, 0, MaxRate) * GH) / MaxRate);
+    end;
+
+    // Shaded download area
+    SetLength(PolyDown, Cnt + 2);
+    for I := 0 to Cnt - 1 do
+      PolyDown[I] := PtsDown[I];
+    PolyDown[Cnt] := Point(PtsDown[Cnt - 1].X, PAD_T + GH);
+    PolyDown[Cnt + 1] := Point(PtsDown[0].X, PAD_T + GH);
+    C.Brush.Style := bsSolid;
+    C.Brush.Color := RGBToColor(24, 62, 46);
+    C.Pen.Style := psClear;
+    C.Polygon(PolyDown);
+
+    // Download line (Green)
+    C.Brush.Style := bsClear;
+    C.Pen.Style := psSolid;
+    C.Pen.Width := 2;
+    C.Pen.Color := RGBToColor(46, 204, 113);
+    C.Polyline(PtsDown);
+
+    // Upload line (Sky Blue)
+    C.Pen.Color := RGBToColor(72, 168, 255);
+    C.Polyline(PtsUp);
+  end;
+
+  // Legend overlay at top-left
+  C.Brush.Style := bsSolid;
+  C.Brush.Color := RGBToColor(46, 204, 113);
+  C.FillRect(PAD_L + 8, PAD_T + 6, PAD_L + 18, PAD_T + 14);
+  C.Brush.Style := bsClear;
+  C.Font.Color := RGBToColor(215, 224, 236);
+  C.TextOut(PAD_L + 22, PAD_T + 3, 'Download');
+
+  C.Brush.Style := bsSolid;
+  C.Brush.Color := RGBToColor(72, 168, 255);
+  C.FillRect(PAD_L + 88, PAD_T + 6, PAD_L + 98, PAD_T + 14);
+  C.Brush.Style := bsClear;
+  C.TextOut(PAD_L + 102, PAD_T + 3, 'Upload');
+end;
+
 procedure TDetailsPanel.LoadTorrent(ATorrentId: Integer);
 begin
   if ATorrentId <= 0 then
   begin
     FCurrentId := 0;
     FOwnedTorrent.Id := 0;
+    SetLength(FTorrentDownHist, 0);
+    SetLength(FTorrentUpHist, 0);
+    UpdateGraphStatsLabel;
+    if PbSpeedGraph <> nil then PbSpeedGraph.Invalidate;
     Exit;
   end;
 
@@ -1307,6 +1650,8 @@ begin
   SetLength(FOwnedTorrent.Files, 0);
   SetLength(FOwnedTorrent.Peers, 0);
   SetLength(FOwnedTorrent.Trackers, 0);
+  SetLength(FTorrentDownHist, 0);
+  SetLength(FTorrentUpHist, 0);
   LvFiles.Items.Clear;
 
   if (FRpc <> nil) and FRpc.FetchTorrentDetails(FOwnedTorrent) then
@@ -1339,6 +1684,13 @@ begin
   LblStateVal.Caption := FOwnedTorrent.FullStatusString;
   LblDownSpdVal.Caption := FormatSpeed(FOwnedTorrent.RateDownload);
   LblUpSpdVal.Caption := FormatSpeed(FOwnedTorrent.RateUpload);
+  PushSpeedSample(FTorrentDownHist, FTorrentUpHist, FOwnedTorrent.RateDownload, FOwnedTorrent.RateUpload);
+  if (RbGraphTorrent <> nil) and RbGraphTorrent.Checked then
+  begin
+    UpdateGraphStatsLabel;
+    if (PbSpeedGraph <> nil) and (FPageControl <> nil) and (FPageControl.ActivePage = TsSpeedGraphTab) then
+      PbSpeedGraph.Invalidate;
+  end;
   LblRunTimeVal.Caption := Format('Downloading: %s, Seeding: %s',
     [FormatDuration(FOwnedTorrent.SecondsDownloading), FormatDuration(FOwnedTorrent.SecondsSeeding)]);
   LblRemTimeVal.Caption := FormatETA(FOwnedTorrent.ETA);
@@ -2081,6 +2433,8 @@ type
     ChkStartMinimized: TCheckBox;
     RbCloseExit: TRadioButton;
     RbCloseTray: TRadioButton;
+    ChkAssocTorrent: TCheckBox;
+    ChkAssocMagnet: TCheckBox;
 
     procedure LstCategoriesClick(Sender: TObject);
     procedure LstCategoriesDrawItem(Control: TWinControl; Index: Integer;
@@ -2247,6 +2601,8 @@ begin
   if Trim(EdtDataDir.Text) <> '' then
     DesktopPtr^.DataDir := Trim(EdtDataDir.Text);
   SetWindowsAutoStart(ChkAutoStart.Checked, ChkStartMinimized.Checked);
+  SetTorrentFileAssociation(ChkAssocTorrent.Checked);
+  SetMagnetProtocolAssociation(ChkAssocMagnet.Checked);
 
   Args := TJSONObject.Create;
   Args.Add('speed-limit-up-enabled', ChkUpLimit.Checked);
@@ -2641,24 +2997,39 @@ begin
     F.ChkStartMinimized := MakeCheck(Gb1, 34, 52, 'Start minimized to system tray (เริ่มแบบย่อไปมุมขวาล่าง)', AutoStartMin);
     F.ChkStartMinimized.Enabled := AutoStartOn;
 
-    Gb2 := MakeGroup(F.Pages[7], 110, 165, 'Window Close Button Behavior (เมื่อกดปุ่มปิด X)');
+    Gb2 := MakeGroup(F.Pages[7], 108, 148, 'Window Close Button Behavior (เมื่อกดปุ่มปิด X)');
     F.RbCloseExit := TRadioButton.Create(Gb2);
     F.RbCloseExit.Parent := Gb2;
-    F.RbCloseExit.Left := 14; F.RbCloseExit.Top := 26;
+    F.RbCloseExit.Left := 14; F.RbCloseExit.Top := 24;
     F.RbCloseExit.Caption := 'Exit program immediately (ปิดโปรแกรมทันที)';
     F.RbCloseExit.Checked := not DesktopPrefs.MinimizeToTray;
 
     F.RbCloseTray := TRadioButton.Create(Gb2);
     F.RbCloseTray.Parent := Gb2;
-    F.RbCloseTray.Left := 14; F.RbCloseTray.Top := 54;
+    F.RbCloseTray.Left := 14; F.RbCloseTray.Top := 50;
     F.RbCloseTray.Caption := 'Minimize to system tray (ย่อไปไว้มุมขวาล่าง)';
     F.RbCloseTray.Checked := DesktopPrefs.MinimizeToTray;
 
-    Lbl := MakeLabel(Gb2, 14, 88,
+    Lbl := MakeLabel(Gb2, 14, 80,
       'คำแนะนำ: เมื่อเลือก "Minimize to system tray" การกดปุ่มปิด (X) จะซ่อนหน้าต่างลงไปที่มุมขวาล่าง ' +
       'โดยโปรแกรมยังคงทำงานต่อเบื้องหลัง ดับเบิลคลิกไอคอนเพื่อเปิดกลับ หรือคลิกขวาแล้วเลือก Quit เพื่อปิดถาวร');
     Lbl.Width := 502;
-    Lbl.Height := 58;
+    Lbl.Height := 52;
+    Lbl.AutoSize := False;
+    Lbl.WordWrap := True;
+    Lbl.Font.Color := clGrayText;
+
+    Gb3 := MakeGroup(F.Pages[7], 264, 134, 'Windows File & Magnet Integration (ผูกไฟล์และลิงก์)');
+    F.ChkAssocTorrent := MakeCheck(Gb3, 14, 24,
+      'Associate .torrent files with Transmission (ดับเบิลคลิกเปิดไฟล์ .torrent)',
+      GetTorrentFileAssociation);
+    F.ChkAssocMagnet := MakeCheck(Gb3, 14, 52,
+      'Associate magnet: links with Transmission (คลิกลิงก์ magnet: จากเบราว์เซอร์)',
+      GetMagnetProtocolAssociation);
+    Lbl := MakeLabel(Gb3, 14, 82,
+      'บันทึกลง HKEY_CURRENT_USER (ไม่ต้องใช้สิทธิ์ Administrator) และเปิดเข้าหน้าต่างเดิมอัตโนมัติเมื่อเปิดซ้ำ');
+    Lbl.Width := 502;
+    Lbl.Height := 36;
     Lbl.AutoSize := False;
     Lbl.WordWrap := True;
     Lbl.Font.Color := clGrayText;

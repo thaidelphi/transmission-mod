@@ -2147,6 +2147,8 @@ begin
         FAllTorrents.Add(NewList[I]);
       NewList.Clear;
       FRpc.FetchSessionStats(FSessionStats);
+      if FDetailsPanel <> nil then
+        FDetailsPanel.RecordGlobalSpeed(FSessionStats.DownloadSpeed, FSessionStats.UploadSpeed);
       Inc(FSessionSyncCounter);
       if (FSessionSyncCounter mod 4) = 0 then
       begin

@@ -275,6 +275,10 @@ function ExtractTrackerHost(const AnnounceUrl: string): string;
 function HasCliFlag(const Flag: string): Boolean;
 function GetWindowsAutoStart(out StartMinimized: Boolean): Boolean;
 function SetWindowsAutoStart(Enabled, StartMinimized: Boolean): Boolean;
+function GetTorrentFileAssociation: Boolean;
+function SetTorrentFileAssociation(Enabled: Boolean): Boolean;
+function GetMagnetProtocolAssociation: Boolean;
+function SetMagnetProtocolAssociation(Enabled: Boolean): Boolean;
 function GetDefaultPortableDataDir: string;
 function ExportPortableBackup(const DestFilePath, DataDir, IniPath: string;
   History: TDownloadHistoryManager): Boolean;
@@ -662,6 +666,199 @@ end;
 {$IFDEF WINDOWS}
 function WinSetThreadExecutionState(esFlags: DWORD): DWORD; stdcall;
   external 'kernel32.dll' name 'SetThreadExecutionState';
+procedure WinSHChangeNotify(wEventId: LongInt; uFlags: UINT; dwItem1, dwItem2: Pointer); stdcall;
+  external 'shell32.dll' name 'SHChangeNotify';
+
+const
+  TORRENT_PROG_ID = 'TransmissionLaz.Torrent';
+
+function ReadHkcuStr(const SubKey, ValName: string): string;
+var
+  Reg: TRegistry;
+begin
+  Result := '';
+  Reg := TRegistry.Create(KEY_READ);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    if Reg.OpenKeyReadOnly(SubKey) and Reg.ValueExists(ValName) then
+      Result := Trim(Reg.ReadString(ValName));
+  finally
+    Reg.Free;
+  end;
+end;
+
+function WriteHkcuStr(const SubKey, ValName, Value: string): Boolean;
+var
+  Reg: TRegistry;
+begin
+  Result := False;
+  Reg := TRegistry.Create(KEY_READ or KEY_WRITE);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    if Reg.OpenKey(SubKey, True) then
+    begin
+      Reg.WriteString(ValName, Value);
+      Result := True;
+    end;
+  finally
+    Reg.Free;
+  end;
+end;
+
+procedure DeleteHkcuKeysBottomUp(const Keys: array of string);
+var
+  Reg: TRegistry;
+  I: Integer;
+begin
+  Reg := TRegistry.Create(KEY_READ or KEY_WRITE);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    for I := Low(Keys) to High(Keys) do
+      if Reg.KeyExists(Keys[I]) then
+        Reg.DeleteKey(Keys[I]);
+  finally
+    Reg.Free;
+  end;
+end;
+
+function CommandPointsToSelf(const Cmd: string): Boolean;
+var
+  ExePath: string;
+begin
+  ExePath := LowerCase(ParamStr(0));
+  Result := (Cmd <> '') and (Pos(ExePath, LowerCase(Cmd)) > 0);
+end;
+
+procedure NotifyShellAssocChanged;
+begin
+  WinSHChangeNotify($08000000 {SHCNE_ASSOCCHANGED}, 0 {SHCNF_IDLIST}, nil, nil);
+end;
+{$ENDIF}
+
+function GetTorrentFileAssociation: Boolean;
+{$IFDEF WINDOWS}
+var
+  ProgId, Cmd: string;
+begin
+  ProgId := ReadHkcuStr('\Software\Classes\.torrent', '');
+  if not SameText(ProgId, TORRENT_PROG_ID) then
+    Exit(False);
+  Cmd := ReadHkcuStr('\Software\Classes\' + TORRENT_PROG_ID + '\shell\open\command', '');
+  Result := CommandPointsToSelf(Cmd);
+end;
+{$ELSE}
+begin
+  Result := False;
+end;
+{$ENDIF}
+
+function SetTorrentFileAssociation(Enabled: Boolean): Boolean;
+{$IFDEF WINDOWS}
+var
+  ExePath, OpenCmd: string;
+  Reg: TRegistry;
+begin
+  Result := False;
+  ExePath := ParamStr(0);
+  OpenCmd := '"' + ExePath + '" "%1"';
+  if Enabled then
+  begin
+    Result :=
+      WriteHkcuStr('\Software\Classes\.torrent', '', TORRENT_PROG_ID) and
+      WriteHkcuStr('\Software\Classes\.torrent', 'Content Type', 'application/x-bittorrent') and
+      WriteHkcuStr('\Software\Classes\' + TORRENT_PROG_ID, '', 'BitTorrent File') and
+      WriteHkcuStr('\Software\Classes\' + TORRENT_PROG_ID + '\DefaultIcon', '', '"' + ExePath + '",0') and
+      WriteHkcuStr('\Software\Classes\' + TORRENT_PROG_ID + '\shell\open\command', '', OpenCmd);
+  end
+  else
+  begin
+    if SameText(ReadHkcuStr('\Software\Classes\.torrent', ''), TORRENT_PROG_ID) then
+    begin
+      Reg := TRegistry.Create(KEY_READ or KEY_WRITE);
+      try
+        Reg.RootKey := HKEY_CURRENT_USER;
+        if Reg.OpenKey('\Software\Classes\.torrent', False) and Reg.ValueExists('') then
+          Reg.DeleteValue('');
+      finally
+        Reg.Free;
+      end;
+    end;
+    DeleteHkcuKeysBottomUp([
+      '\Software\Classes\' + TORRENT_PROG_ID + '\shell\open\command',
+      '\Software\Classes\' + TORRENT_PROG_ID + '\shell\open',
+      '\Software\Classes\' + TORRENT_PROG_ID + '\shell',
+      '\Software\Classes\' + TORRENT_PROG_ID + '\DefaultIcon',
+      '\Software\Classes\' + TORRENT_PROG_ID
+    ]);
+    Result := True;
+  end;
+  NotifyShellAssocChanged;
+end;
+{$ELSE}
+begin
+  Result := False;
+end;
+{$ENDIF}
+
+function GetMagnetProtocolAssociation: Boolean;
+{$IFDEF WINDOWS}
+var
+  Reg: TRegistry;
+  HasProto: Boolean;
+  Cmd: string;
+begin
+  Result := False;
+  Reg := TRegistry.Create(KEY_READ);
+  try
+    Reg.RootKey := HKEY_CURRENT_USER;
+    HasProto := Reg.OpenKeyReadOnly('\Software\Classes\magnet') and Reg.ValueExists('URL Protocol');
+  finally
+    Reg.Free;
+  end;
+  if not HasProto then Exit(False);
+  Cmd := ReadHkcuStr('\Software\Classes\magnet\shell\open\command', '');
+  Result := CommandPointsToSelf(Cmd);
+end;
+{$ELSE}
+begin
+  Result := False;
+end;
+{$ENDIF}
+
+function SetMagnetProtocolAssociation(Enabled: Boolean): Boolean;
+{$IFDEF WINDOWS}
+var
+  ExePath, OpenCmd: string;
+begin
+  Result := False;
+  ExePath := ParamStr(0);
+  OpenCmd := '"' + ExePath + '" "%1"';
+  if Enabled then
+  begin
+    Result :=
+      WriteHkcuStr('\Software\Classes\magnet', '', 'URL:Magnet Protocol') and
+      WriteHkcuStr('\Software\Classes\magnet', 'URL Protocol', '') and
+      WriteHkcuStr('\Software\Classes\magnet\DefaultIcon', '', '"' + ExePath + '",0') and
+      WriteHkcuStr('\Software\Classes\magnet\shell\open\command', '', OpenCmd);
+  end
+  else
+  begin
+    if CommandPointsToSelf(ReadHkcuStr('\Software\Classes\magnet\shell\open\command', '')) then
+      DeleteHkcuKeysBottomUp([
+        '\Software\Classes\magnet\shell\open\command',
+        '\Software\Classes\magnet\shell\open',
+        '\Software\Classes\magnet\shell',
+        '\Software\Classes\magnet\DefaultIcon',
+        '\Software\Classes\magnet'
+      ]);
+    Result := True;
+  end;
+  NotifyShellAssocChanged;
+end;
+{$ELSE}
+begin
+  Result := False;
+end;
 {$ENDIF}
 
 procedure SetPreventSystemSleep(Active: Boolean);
