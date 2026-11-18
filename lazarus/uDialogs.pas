@@ -37,6 +37,88 @@ uses
   Classes, SysUtils, Types, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
   ComCtrls, Spin, Clipbrd, LCLIntf, fpjson, DateUtils, uTypes, uBencode, uRpcClient, uWebServer;
 
+type
+  { TDetailsPanel: พาเนลแสดงและแก้ไขคุณสมบัติทอร์เรนต์ 6 แท็บ ใช้ร่วมกันได้ทั้งในหน้าต่างหลักด้านล่างและ Modal Dialog }
+  TDetailsPanel = class(TPanel)
+  private
+    FRpc: TTransmissionRpcClient;
+    FOwnedTorrent: TTorrentItem;
+    FCurrentId: Integer;
+    FOnDataChanged: TNotifyEvent;
+    FOnModalStart: TNotifyEvent;
+    FOnModalEnd: TNotifyEvent;
+
+    FPageControl: TPageControl;
+
+    // Activity dynamic labels
+    LblHaveVal: TLabel;
+    LblDownVal: TLabel;
+    LblUpVal: TLabel;
+    LblStateVal: TLabel;
+    LblDownSpdVal: TLabel;
+    LblUpSpdVal: TLabel;
+    LblRunTimeVal: TLabel;
+    LblRemTimeVal: TLabel;
+    LblLastActVal: TLabel;
+    LblErrVal: TLabel;
+
+    // Information dynamic labels
+    LblInfoSizeVal: TLabel;
+    LblInfoHashVal: TLabel;
+    LblInfoTypeVal: TLabel;
+    LblInfoLocVal: TLabel;
+    LblInfoCreatorVal: TLabel;
+    LblInfoAddedVal: TLabel;
+    LblInfoDoneVal: TLabel;
+    LblInfoCommentVal: TLabel;
+
+    TsPeersTab: TTabSheet;
+    TsTrackersTab: TTabSheet;
+    TsFilesTab: TTabSheet;
+    LvPeers: TListView;
+    LvTrackers: TListView;
+    LvFiles: TListView;
+
+    ChkHonorSession: TCheckBox;
+    ChkDownLimit: TCheckBox;
+    SpnDownLimit: TSpinEdit;
+    ChkUpLimit: TCheckBox;
+    SpnUpLimit: TSpinEdit;
+    CmbRatioMode: TComboBox;
+    EdtRatioLimit: TEdit;
+    SpnPeerLimit: TSpinEdit;
+
+    procedure BuildTabs;
+    procedure NotifyModalStart;
+    procedure NotifyModalEnd;
+    procedure NotifyDataChanged;
+    procedure SyncOptionsAndInfo;
+    procedure UpdateDynamicViews;
+
+    procedure BtnApplyOptionsClick(Sender: TObject);
+    procedure BtnApplyFilesClick(Sender: TObject);
+    procedure BtnSelectAllFilesClick(Sender: TObject);
+    procedure BtnSelectNoneFilesClick(Sender: TObject);
+    procedure BtnSetFilePriorityClick(Sender: TObject);
+    procedure BtnRenameFileClick(Sender: TObject);
+    procedure BtnEditTrackersClick(Sender: TObject);
+    procedure BtnAddTrackerClick(Sender: TObject);
+    procedure BtnRemoveTrackerClick(Sender: TObject);
+    procedure BtnToggleTrackerHttpsClick(Sender: TObject);
+  public
+    constructor CreatePanel(AOwner: TComponent; ARpc: TTransmissionRpcClient);
+    destructor Destroy; override;
+
+    procedure LoadTorrent(ATorrentId: Integer);
+    procedure RefreshDetails;
+
+    property CurrentTorrentId: Integer read FCurrentId;
+    property PageControl: TPageControl read FPageControl;
+    property OnDataChanged: TNotifyEvent read FOnDataChanged write FOnDataChanged;
+    property OnModalStart: TNotifyEvent read FOnModalStart write FOnModalStart;
+    property OnModalEnd: TNotifyEvent read FOnModalEnd write FOnModalEnd;
+  end;
+
 function ShowOpenTorrentDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   const InitialFile, DefaultDir: string; DefaultStart: Boolean;
   out SelectedFile, DestDir: string; out StartNow, TrashTorrent: Boolean;
@@ -851,55 +933,14 @@ begin
   end;
 end;
 
-{ 5. Torrent Properties / Details Dialog (with Live Auto-Refresh) }
+{ 5. Torrent Properties / Details Panel & Dialog (with Live Auto-Refresh) }
 
 type
   TDetailsForm = class(TForm)
   public
-    RpcRef: TTransmissionRpcClient;
-    TorRef: TTorrentItem;
+    DetailsPanel: TDetailsPanel;
     RefreshTimer: TTimer;
-
-    // Activity dynamic labels
-    LblHaveVal: TLabel;
-    LblDownVal: TLabel;
-    LblUpVal: TLabel;
-    LblStateVal: TLabel;
-    LblDownSpdVal: TLabel;
-    LblUpSpdVal: TLabel;
-    LblRunTimeVal: TLabel;
-    LblRemTimeVal: TLabel;
-    LblLastActVal: TLabel;
-    LblErrVal: TLabel;
-
-    TsPeersTab: TTabSheet;
-    TsTrackersTab: TTabSheet;
-    TsFilesTab: TTabSheet;
-    LvPeers: TListView;
-    LvTrackers: TListView;
-    LvFiles: TListView;
-
-    ChkHonorSession: TCheckBox;
-    ChkDownLimit: TCheckBox;
-    SpnDownLimit: TSpinEdit;
-    ChkUpLimit: TCheckBox;
-    SpnUpLimit: TSpinEdit;
-    CmbRatioMode: TComboBox;
-    EdtRatioLimit: TEdit;
-    SpnPeerLimit: TSpinEdit;
-
-    procedure UpdateDynamicViews;
     procedure RefreshTimerTick(Sender: TObject);
-    procedure BtnApplyOptionsClick(Sender: TObject);
-    procedure BtnApplyFilesClick(Sender: TObject);
-    procedure BtnSelectAllFilesClick(Sender: TObject);
-    procedure BtnSelectNoneFilesClick(Sender: TObject);
-    procedure BtnSetFilePriorityClick(Sender: TObject);
-    procedure BtnRenameFileClick(Sender: TObject);
-    procedure BtnEditTrackersClick(Sender: TObject);
-    procedure BtnAddTrackerClick(Sender: TObject);
-    procedure BtnRemoveTrackerClick(Sender: TObject);
-    procedure BtnToggleTrackerHttpsClick(Sender: TObject);
   end;
 
 function CreateKeyValLabel(ParentCtrl: TWinControl; Y: Integer; const KeyText, ValText: string): TLabel;
@@ -921,73 +962,410 @@ begin
   Result.Caption := ValText;
 end;
 
-procedure TDetailsForm.UpdateDynamicViews;
+constructor TDetailsPanel.CreatePanel(AOwner: TComponent; ARpc: TTransmissionRpcClient);
+begin
+  inherited Create(AOwner);
+  FRpc := ARpc;
+  FOwnedTorrent := TTorrentItem.Create;
+  FCurrentId := 0;
+  BevelOuter := bvNone;
+  DoubleBuffered := True;
+  BuildTabs;
+end;
+
+destructor TDetailsPanel.Destroy;
+begin
+  FOwnedTorrent.Free;
+  inherited Destroy;
+end;
+
+procedure TDetailsPanel.NotifyModalStart;
+begin
+  if Assigned(FOnModalStart) then FOnModalStart(Self);
+end;
+
+procedure TDetailsPanel.NotifyModalEnd;
+begin
+  if Assigned(FOnModalEnd) then FOnModalEnd(Self);
+end;
+
+procedure TDetailsPanel.NotifyDataChanged;
+begin
+  if Assigned(FOnDataChanged) then FOnDataChanged(Self);
+end;
+
+procedure TDetailsPanel.BuildTabs;
+var
+  TsAct, TsInfo, TsOpts: TTabSheet;
+  SbAct, SbInfo, SbOpts: TScrollBox;
+  PnlTrkBtns, PnlFileBtns: TPanel;
+  BtnAddTrk, BtnEditTrk, BtnRemTrk, BtnToggleTrk: TButton;
+  BtnSelAll, BtnSelNone, BtnPriHigh, BtnPriNorm, BtnPriLow, BtnRename, BtnSaveFiles: TButton;
+  BtnApplyOpt: TButton;
+  Lbl: TLabel;
+begin
+  FPageControl := TPageControl.Create(Self);
+  FPageControl.Parent := Self;
+  FPageControl.Align := alClient;
+
+  // Tab 1: Activity (ห่อด้วย TScrollBox เพื่อรองรับพาเนลด้านล่างทุกความสูง)
+  TsAct := FPageControl.AddTabSheet;
+  TsAct.Caption := 'Activity';
+  SbAct := TScrollBox.Create(TsAct);
+  SbAct.Parent := TsAct;
+  SbAct.Align := alClient;
+  SbAct.BorderStyle := bsNone;
+  LblHaveVal := CreateKeyValLabel(SbAct, 14, 'Have:', '');
+  LblDownVal := CreateKeyValLabel(SbAct, 40, 'Downloaded:', '');
+  LblUpVal := CreateKeyValLabel(SbAct, 66, 'Uploaded:', '');
+  LblStateVal := CreateKeyValLabel(SbAct, 92, 'State:', '');
+  LblDownSpdVal := CreateKeyValLabel(SbAct, 118, 'Download Speed:', '');
+  LblUpSpdVal := CreateKeyValLabel(SbAct, 144, 'Upload Speed:', '');
+  LblRunTimeVal := CreateKeyValLabel(SbAct, 170, 'Running Time:', '');
+  LblRemTimeVal := CreateKeyValLabel(SbAct, 196, 'Remaining Time:', '');
+  LblLastActVal := CreateKeyValLabel(SbAct, 222, 'Last Activity:', '');
+  LblErrVal := CreateKeyValLabel(SbAct, 248, 'Error:', '');
+
+  // Tab 2: Information
+  TsInfo := FPageControl.AddTabSheet;
+  TsInfo.Caption := 'Information';
+  SbInfo := TScrollBox.Create(TsInfo);
+  SbInfo.Parent := TsInfo;
+  SbInfo.Align := alClient;
+  SbInfo.BorderStyle := bsNone;
+  LblInfoSizeVal := CreateKeyValLabel(SbInfo, 14, 'Total Size:', '');
+  LblInfoHashVal := CreateKeyValLabel(SbInfo, 40, 'Hash:', '');
+  LblInfoTypeVal := CreateKeyValLabel(SbInfo, 66, 'Type:', '');
+  LblInfoLocVal := CreateKeyValLabel(SbInfo, 92, 'Location:', '');
+  LblInfoCreatorVal := CreateKeyValLabel(SbInfo, 118, 'Creator:', '');
+  LblInfoAddedVal := CreateKeyValLabel(SbInfo, 144, 'Added Date:', '');
+  LblInfoDoneVal := CreateKeyValLabel(SbInfo, 170, 'Completed Date:', '');
+  LblInfoCommentVal := CreateKeyValLabel(SbInfo, 196, 'Comment:', '');
+
+  // Tab 3: Peers
+  TsPeersTab := FPageControl.AddTabSheet;
+  TsPeersTab.Caption := 'Peers';
+  LvPeers := TListView.Create(TsPeersTab);
+  LvPeers.Parent := TsPeersTab;
+  LvPeers.Align := alClient;
+  LvPeers.ViewStyle := vsReport;
+  LvPeers.ReadOnly := True;
+  LvPeers.RowSelect := True;
+  LvPeers.GridLines := True;
+  with LvPeers.Columns.Add do begin Caption := 'Address'; Width := 155; end;
+  with LvPeers.Columns.Add do begin Caption := 'Client'; Width := 155; end;
+  with LvPeers.Columns.Add do begin Caption := '%'; Width := 65; end;
+  with LvPeers.Columns.Add do begin Caption := 'Down'; Width := 90; end;
+  with LvPeers.Columns.Add do begin Caption := 'Up'; Width := 90; end;
+  with LvPeers.Columns.Add do begin Caption := 'Flags'; Width := 65; end;
+
+  // Tab 4: Trackers (ใช้ alBottom สำหรับแถวปุ่ม เพื่อไม่ให้หลุดขอบเมื่อย่อความสูงพาเนล)
+  TsTrackersTab := FPageControl.AddTabSheet;
+  TsTrackersTab.Caption := 'Trackers';
+  PnlTrkBtns := TPanel.Create(TsTrackersTab);
+  PnlTrkBtns.Parent := TsTrackersTab;
+  PnlTrkBtns.Align := alBottom;
+  PnlTrkBtns.Height := 36;
+  PnlTrkBtns.BevelOuter := bvNone;
+
+  LvTrackers := TListView.Create(TsTrackersTab);
+  LvTrackers.Parent := TsTrackersTab;
+  LvTrackers.Align := alClient;
+  LvTrackers.ViewStyle := vsReport;
+  LvTrackers.ReadOnly := True;
+  LvTrackers.RowSelect := True;
+  LvTrackers.GridLines := True;
+  with LvTrackers.Columns.Add do begin Caption := 'Tier'; Width := 45; end;
+  with LvTrackers.Columns.Add do begin Caption := 'Tracker Announce URL'; Width := 320; end;
+  with LvTrackers.Columns.Add do begin Caption := 'Status'; Width := 160; end;
+  with LvTrackers.Columns.Add do begin Caption := 'Seeders'; Width := 65; end;
+  with LvTrackers.Columns.Add do begin Caption := 'Leechers'; Width := 65; end;
+
+  BtnAddTrk := TButton.Create(PnlTrkBtns);
+  BtnAddTrk.Parent := PnlTrkBtns;
+  BtnAddTrk.Left := 8; BtnAddTrk.Top := 5; BtnAddTrk.Width := 110; BtnAddTrk.Height := 26;
+  BtnAddTrk.Caption := 'Add Tracker...';
+  BtnAddTrk.OnClick := @BtnAddTrackerClick;
+
+  BtnEditTrk := TButton.Create(PnlTrkBtns);
+  BtnEditTrk.Parent := PnlTrkBtns;
+  BtnEditTrk.Left := 124; BtnEditTrk.Top := 5; BtnEditTrk.Width := 115; BtnEditTrk.Height := 26;
+  BtnEditTrk.Caption := 'Edit Trackers...';
+  BtnEditTrk.OnClick := @BtnEditTrackersClick;
+
+  BtnRemTrk := TButton.Create(PnlTrkBtns);
+  BtnRemTrk.Parent := PnlTrkBtns;
+  BtnRemTrk.Left := 245; BtnRemTrk.Top := 5; BtnRemTrk.Width := 120; BtnRemTrk.Height := 26;
+  BtnRemTrk.Caption := 'Remove Tracker';
+  BtnRemTrk.OnClick := @BtnRemoveTrackerClick;
+
+  BtnToggleTrk := TButton.Create(PnlTrkBtns);
+  BtnToggleTrk.Parent := PnlTrkBtns;
+  BtnToggleTrk.Left := 371; BtnToggleTrk.Top := 5; BtnToggleTrk.Width := 190; BtnToggleTrk.Height := 26;
+  BtnToggleTrk.Caption := 'สลับ https:// <-> ht..tps://';
+  BtnToggleTrk.OnClick := @BtnToggleTrackerHttpsClick;
+
+  // Tab 5: Files
+  TsFilesTab := FPageControl.AddTabSheet;
+  TsFilesTab.Caption := 'Files';
+  PnlFileBtns := TPanel.Create(TsFilesTab);
+  PnlFileBtns.Parent := TsFilesTab;
+  PnlFileBtns.Align := alBottom;
+  PnlFileBtns.Height := 36;
+  PnlFileBtns.BevelOuter := bvNone;
+
+  LvFiles := TListView.Create(TsFilesTab);
+  LvFiles.Parent := TsFilesTab;
+  LvFiles.Align := alClient;
+  LvFiles.ViewStyle := vsReport;
+  LvFiles.Checkboxes := True;
+  LvFiles.MultiSelect := True;
+  LvFiles.RowSelect := True;
+  LvFiles.GridLines := True;
+  with LvFiles.Columns.Add do begin Caption := 'File Name'; Width := 305; end;
+  with LvFiles.Columns.Add do begin Caption := 'Size'; Width := 85; end;
+  with LvFiles.Columns.Add do begin Caption := 'Done'; Width := 85; end;
+  with LvFiles.Columns.Add do begin Caption := '%'; Width := 60; end;
+  with LvFiles.Columns.Add do begin Caption := 'Priority'; Width := 65; end;
+
+  BtnSelAll := TButton.Create(PnlFileBtns);
+  BtnSelAll.Parent := PnlFileBtns;
+  BtnSelAll.Left := 8; BtnSelAll.Top := 5; BtnSelAll.Width := 68; BtnSelAll.Height := 26;
+  BtnSelAll.Caption := 'All';
+  BtnSelAll.OnClick := @BtnSelectAllFilesClick;
+
+  BtnSelNone := TButton.Create(PnlFileBtns);
+  BtnSelNone.Parent := PnlFileBtns;
+  BtnSelNone.Left := 80; BtnSelNone.Top := 5; BtnSelNone.Width := 68; BtnSelNone.Height := 26;
+  BtnSelNone.Caption := 'None';
+  BtnSelNone.OnClick := @BtnSelectNoneFilesClick;
+
+  BtnPriHigh := TButton.Create(PnlFileBtns);
+  BtnPriHigh.Parent := PnlFileBtns;
+  BtnPriHigh.Left := 156; BtnPriHigh.Top := 5; BtnPriHigh.Width := 72; BtnPriHigh.Height := 26;
+  BtnPriHigh.Caption := 'Pri: High';
+  BtnPriHigh.Tag := TR_PRI_HIGH;
+  BtnPriHigh.OnClick := @BtnSetFilePriorityClick;
+
+  BtnPriNorm := TButton.Create(PnlFileBtns);
+  BtnPriNorm.Parent := PnlFileBtns;
+  BtnPriNorm.Left := 232; BtnPriNorm.Top := 5; BtnPriNorm.Width := 76; BtnPriNorm.Height := 26;
+  BtnPriNorm.Caption := 'Pri: Norm';
+  BtnPriNorm.Tag := TR_PRI_NORMAL;
+  BtnPriNorm.OnClick := @BtnSetFilePriorityClick;
+
+  BtnPriLow := TButton.Create(PnlFileBtns);
+  BtnPriLow.Parent := PnlFileBtns;
+  BtnPriLow.Left := 312; BtnPriLow.Top := 5; BtnPriLow.Width := 72; BtnPriLow.Height := 26;
+  BtnPriLow.Caption := 'Pri: Low';
+  BtnPriLow.Tag := TR_PRI_LOW;
+  BtnPriLow.OnClick := @BtnSetFilePriorityClick;
+
+  BtnRename := TButton.Create(PnlFileBtns);
+  BtnRename.Parent := PnlFileBtns;
+  BtnRename.Left := 390; BtnRename.Top := 5; BtnRename.Width := 85; BtnRename.Height := 26;
+  BtnRename.Caption := 'Rename...';
+  BtnRename.OnClick := @BtnRenameFileClick;
+
+  BtnSaveFiles := TButton.Create(PnlFileBtns);
+  BtnSaveFiles.Parent := PnlFileBtns;
+  BtnSaveFiles.Left := 485; BtnSaveFiles.Top := 5; BtnSaveFiles.Width := 145; BtnSaveFiles.Height := 26;
+  BtnSaveFiles.Caption := 'Apply Wanted Files';
+  BtnSaveFiles.OnClick := @BtnApplyFilesClick;
+
+  // Tab 6: Options
+  TsOpts := FPageControl.AddTabSheet;
+  TsOpts.Caption := 'Options';
+  SbOpts := TScrollBox.Create(TsOpts);
+  SbOpts.Parent := TsOpts;
+  SbOpts.Align := alClient;
+  SbOpts.BorderStyle := bsNone;
+
+  ChkHonorSession := TCheckBox.Create(SbOpts);
+  ChkHonorSession.Parent := SbOpts;
+  ChkHonorSession.Left := 20; ChkHonorSession.Top := 16;
+  ChkHonorSession.Caption := 'Honor global session bandwidth limits';
+
+  ChkDownLimit := TCheckBox.Create(SbOpts);
+  ChkDownLimit.Parent := SbOpts;
+  ChkDownLimit.Left := 20; ChkDownLimit.Top := 48;
+  ChkDownLimit.Caption := 'Limit download speed (KB/s):';
+
+  SpnDownLimit := TSpinEdit.Create(SbOpts);
+  SpnDownLimit.Parent := SbOpts;
+  SpnDownLimit.Left := 230; SpnDownLimit.Top := 44; SpnDownLimit.Width := 100;
+  SpnDownLimit.MaxValue := 1000000;
+
+  ChkUpLimit := TCheckBox.Create(SbOpts);
+  ChkUpLimit.Parent := SbOpts;
+  ChkUpLimit.Left := 20; ChkUpLimit.Top := 82;
+  ChkUpLimit.Caption := 'Limit upload speed (KB/s):';
+
+  SpnUpLimit := TSpinEdit.Create(SbOpts);
+  SpnUpLimit.Parent := SbOpts;
+  SpnUpLimit.Left := 230; SpnUpLimit.Top := 78; SpnUpLimit.Width := 100;
+  SpnUpLimit.MaxValue := 1000000;
+
+  Lbl := TLabel.Create(SbOpts);
+  Lbl.Parent := SbOpts;
+  Lbl.Left := 20; Lbl.Top := 120;
+  Lbl.Caption := 'Seed ratio limit:';
+
+  CmbRatioMode := TComboBox.Create(SbOpts);
+  CmbRatioMode.Parent := SbOpts;
+  CmbRatioMode.Left := 140; CmbRatioMode.Top := 116; CmbRatioMode.Width := 180;
+  CmbRatioMode.Style := csDropDownList;
+  CmbRatioMode.Items.Add('Use global settings');
+  CmbRatioMode.Items.Add('Stop seeding at ratio:');
+  CmbRatioMode.Items.Add('Seed regardless of ratio');
+
+  EdtRatioLimit := TEdit.Create(SbOpts);
+  EdtRatioLimit.Parent := SbOpts;
+  EdtRatioLimit.Left := 330; EdtRatioLimit.Top := 116; EdtRatioLimit.Width := 80;
+
+  Lbl := TLabel.Create(SbOpts);
+  Lbl.Parent := SbOpts;
+  Lbl.Left := 20; Lbl.Top := 156;
+  Lbl.Caption := 'Maximum peers:';
+
+  SpnPeerLimit := TSpinEdit.Create(SbOpts);
+  SpnPeerLimit.Parent := SbOpts;
+  SpnPeerLimit.Left := 140; SpnPeerLimit.Top := 152; SpnPeerLimit.Width := 100;
+  SpnPeerLimit.MaxValue := 2000;
+
+  BtnApplyOpt := TButton.Create(SbOpts);
+  BtnApplyOpt.Parent := SbOpts;
+  BtnApplyOpt.Left := 20; BtnApplyOpt.Top := 196; BtnApplyOpt.Width := 130; BtnApplyOpt.Height := 28;
+  BtnApplyOpt.Caption := 'Apply Options';
+  BtnApplyOpt.OnClick := @BtnApplyOptionsClick;
+end;
+
+procedure TDetailsPanel.SyncOptionsAndInfo;
+begin
+  LblInfoSizeVal.Caption := Format('%s (%d pieces @ %s)',
+    [FormatSize(FOwnedTorrent.TotalSize), FOwnedTorrent.PieceCount, FormatSize(FOwnedTorrent.PieceSize)]);
+  LblInfoHashVal.Caption := FOwnedTorrent.HashString;
+  if FOwnedTorrent.IsPrivate then
+    LblInfoTypeVal.Caption := 'Private torrent (DHT and PEX disabled)'
+  else
+    LblInfoTypeVal.Caption := 'Public torrent';
+  LblInfoLocVal.Caption := FOwnedTorrent.DownloadDir;
+  LblInfoCreatorVal.Caption := FOwnedTorrent.Creator;
+  LblInfoAddedVal.Caption := UnixToDateTimeStr(FOwnedTorrent.AddedDate);
+  LblInfoDoneVal.Caption := UnixToDateTimeStr(FOwnedTorrent.DoneDate);
+  LblInfoCommentVal.Caption := FOwnedTorrent.Comment;
+
+  ChkHonorSession.Checked := FOwnedTorrent.HonorsSessionLimits;
+  ChkDownLimit.Checked := FOwnedTorrent.DownloadLimited;
+  SpnDownLimit.Value := FOwnedTorrent.DownloadLimit;
+  ChkUpLimit.Checked := FOwnedTorrent.UploadLimited;
+  SpnUpLimit.Value := FOwnedTorrent.UploadLimit;
+  if (FOwnedTorrent.SeedRatioMode >= 0) and (FOwnedTorrent.SeedRatioMode <= 2) then
+    CmbRatioMode.ItemIndex := FOwnedTorrent.SeedRatioMode
+  else
+    CmbRatioMode.ItemIndex := 0;
+  EdtRatioLimit.Text := Format('%.2f', [FOwnedTorrent.SeedRatioLimit]);
+  SpnPeerLimit.Value := FOwnedTorrent.PeerLimit;
+end;
+
+procedure TDetailsPanel.LoadTorrent(ATorrentId: Integer);
+begin
+  if ATorrentId <= 0 then
+  begin
+    FCurrentId := 0;
+    FOwnedTorrent.Id := 0;
+    Exit;
+  end;
+
+  if FCurrentId = ATorrentId then Exit;
+
+  FCurrentId := ATorrentId;
+  FOwnedTorrent.Id := ATorrentId;
+  SetLength(FOwnedTorrent.Files, 0);
+  SetLength(FOwnedTorrent.Peers, 0);
+  SetLength(FOwnedTorrent.Trackers, 0);
+  LvFiles.Items.Clear;
+
+  if (FRpc <> nil) and FRpc.FetchTorrentDetails(FOwnedTorrent) then
+  begin
+    SyncOptionsAndInfo;
+    UpdateDynamicViews;
+  end;
+end;
+
+procedure TDetailsPanel.RefreshDetails;
+begin
+  if (FCurrentId > 0) and (FRpc <> nil) and FRpc.FetchTorrentDetails(FOwnedTorrent) then
+    UpdateDynamicViews;
+end;
+
+procedure TDetailsPanel.UpdateDynamicViews;
 var
   I: Integer;
   LI: TListItem;
   PctFile: Double;
 begin
-  if TorRef = nil then Exit;
+  if FCurrentId <= 0 then Exit;
 
   LblHaveVal.Caption := Format('%s of %s (%s) - %s Unverified',
-    [FormatSize(TorRef.HaveTotal), FormatSize(TorRef.SizeWhenDone),
-     FormatPercent(TorRef.PercentDone), FormatSize(TorRef.HaveUnchecked)]);
-  LblDownVal.Caption := FormatSize(TorRef.DownloadedEver);
+    [FormatSize(FOwnedTorrent.HaveTotal), FormatSize(FOwnedTorrent.SizeWhenDone),
+     FormatPercent(FOwnedTorrent.PercentDone), FormatSize(FOwnedTorrent.HaveUnchecked)]);
+  LblDownVal.Caption := FormatSize(FOwnedTorrent.DownloadedEver);
   LblUpVal.Caption := Format('%s (Ratio: %s)',
-    [FormatSize(TorRef.UploadedEver), FormatRatio(TorRef.UploadRatio)]);
-  LblStateVal.Caption := TorRef.FullStatusString;
-  LblDownSpdVal.Caption := FormatSpeed(TorRef.RateDownload);
-  LblUpSpdVal.Caption := FormatSpeed(TorRef.RateUpload);
+    [FormatSize(FOwnedTorrent.UploadedEver), FormatRatio(FOwnedTorrent.UploadRatio)]);
+  LblStateVal.Caption := FOwnedTorrent.FullStatusString;
+  LblDownSpdVal.Caption := FormatSpeed(FOwnedTorrent.RateDownload);
+  LblUpSpdVal.Caption := FormatSpeed(FOwnedTorrent.RateUpload);
   LblRunTimeVal.Caption := Format('Downloading: %s, Seeding: %s',
-    [FormatDuration(TorRef.SecondsDownloading), FormatDuration(TorRef.SecondsSeeding)]);
-  LblRemTimeVal.Caption := FormatETA(TorRef.ETA);
-  LblLastActVal.Caption := UnixToDateTimeStr(TorRef.ActivityDate);
-  if TorRef.ErrorString <> '' then
-    LblErrVal.Caption := TorRef.ErrorString
+    [FormatDuration(FOwnedTorrent.SecondsDownloading), FormatDuration(FOwnedTorrent.SecondsSeeding)]);
+  LblRemTimeVal.Caption := FormatETA(FOwnedTorrent.ETA);
+  LblLastActVal.Caption := UnixToDateTimeStr(FOwnedTorrent.ActivityDate);
+  if FOwnedTorrent.ErrorString <> '' then
+    LblErrVal.Caption := FOwnedTorrent.ErrorString
   else
     LblErrVal.Caption := 'None';
 
   // Update Peers ListView
-  TsPeersTab.Caption := Format('Peers (%d)', [Length(TorRef.Peers)]);
+  TsPeersTab.Caption := Format('Peers (%d)', [Length(FOwnedTorrent.Peers)]);
   LvPeers.Items.BeginUpdate;
   try
     LvPeers.Items.Clear;
-    for I := 0 to High(TorRef.Peers) do
+    for I := 0 to High(FOwnedTorrent.Peers) do
     begin
       LI := LvPeers.Items.Add;
-      LI.Caption := Format('%s:%d', [TorRef.Peers[I].Address, TorRef.Peers[I].Port]);
-      LI.SubItems.Add(TorRef.Peers[I].ClientName);
-      LI.SubItems.Add(FormatPercent(TorRef.Peers[I].Progress));
-      LI.SubItems.Add(FormatSpeed(TorRef.Peers[I].RateToClient));
-      LI.SubItems.Add(FormatSpeed(TorRef.Peers[I].RateToPeer));
-      LI.SubItems.Add(TorRef.Peers[I].FlagStr);
+      LI.Caption := Format('%s:%d', [FOwnedTorrent.Peers[I].Address, FOwnedTorrent.Peers[I].Port]);
+      LI.SubItems.Add(FOwnedTorrent.Peers[I].ClientName);
+      LI.SubItems.Add(FormatPercent(FOwnedTorrent.Peers[I].Progress));
+      LI.SubItems.Add(FormatSpeed(FOwnedTorrent.Peers[I].RateToClient));
+      LI.SubItems.Add(FormatSpeed(FOwnedTorrent.Peers[I].RateToPeer));
+      LI.SubItems.Add(FOwnedTorrent.Peers[I].FlagStr);
     end;
   finally
     LvPeers.Items.EndUpdate;
   end;
 
   // Update Trackers ListView
-  TsTrackersTab.Caption := Format('Trackers (%d)', [Length(TorRef.Trackers)]);
+  TsTrackersTab.Caption := Format('Trackers (%d)', [Length(FOwnedTorrent.Trackers)]);
   LvTrackers.Items.BeginUpdate;
   try
-    while LvTrackers.Items.Count < Length(TorRef.Trackers) do
+    while LvTrackers.Items.Count < Length(FOwnedTorrent.Trackers) do
       LvTrackers.Items.Add;
-    while LvTrackers.Items.Count > Length(TorRef.Trackers) do
+    while LvTrackers.Items.Count > Length(FOwnedTorrent.Trackers) do
       LvTrackers.Items.Delete(LvTrackers.Items.Count - 1);
 
-    for I := 0 to High(TorRef.Trackers) do
+    for I := 0 to High(FOwnedTorrent.Trackers) do
     begin
       LI := LvTrackers.Items[I];
-      LI.Caption := IntToStr(TorRef.Trackers[I].Tier + 1);
+      LI.Caption := IntToStr(FOwnedTorrent.Trackers[I].Tier + 1);
       LI.SubItems.Clear;
-      LI.SubItems.Add(TorRef.Trackers[I].Announce);
-      LI.SubItems.Add(TorRef.Trackers[I].LastAnnounceResult);
-      if TorRef.Trackers[I].SeederCount >= 0 then
-        LI.SubItems.Add(IntToStr(TorRef.Trackers[I].SeederCount))
+      LI.SubItems.Add(FOwnedTorrent.Trackers[I].Announce);
+      LI.SubItems.Add(FOwnedTorrent.Trackers[I].LastAnnounceResult);
+      if FOwnedTorrent.Trackers[I].SeederCount >= 0 then
+        LI.SubItems.Add(IntToStr(FOwnedTorrent.Trackers[I].SeederCount))
       else
         LI.SubItems.Add('-');
-      if TorRef.Trackers[I].LeecherCount >= 0 then
-        LI.SubItems.Add(IntToStr(TorRef.Trackers[I].LeecherCount))
+      if FOwnedTorrent.Trackers[I].LeecherCount >= 0 then
+        LI.SubItems.Add(IntToStr(FOwnedTorrent.Trackers[I].LeecherCount))
       else
         LI.SubItems.Add('-');
     end;
@@ -996,25 +1374,25 @@ begin
   end;
 
   // Update Files progress without overwriting user's unsaved checkbox changes if count matches
-  TsFilesTab.Caption := Format('Files (%d)', [Length(TorRef.Files)]);
-  if LvFiles.Items.Count <> Length(TorRef.Files) then
+  TsFilesTab.Caption := Format('Files (%d)', [Length(FOwnedTorrent.Files)]);
+  if LvFiles.Items.Count <> Length(FOwnedTorrent.Files) then
   begin
     LvFiles.Items.BeginUpdate;
     try
       LvFiles.Items.Clear;
-      for I := 0 to High(TorRef.Files) do
+      for I := 0 to High(FOwnedTorrent.Files) do
       begin
         LI := LvFiles.Items.Add;
-        LI.Checked := TorRef.Files[I].Wanted;
-        LI.Caption := TorRef.Files[I].Name;
-        LI.SubItems.Add(FormatSize(TorRef.Files[I].Length));
-        LI.SubItems.Add(FormatSize(TorRef.Files[I].BytesCompleted));
-        if TorRef.Files[I].Length > 0 then
-          PctFile := TorRef.Files[I].BytesCompleted / TorRef.Files[I].Length
+        LI.Checked := FOwnedTorrent.Files[I].Wanted;
+        LI.Caption := FOwnedTorrent.Files[I].Name;
+        LI.SubItems.Add(FormatSize(FOwnedTorrent.Files[I].Length));
+        LI.SubItems.Add(FormatSize(FOwnedTorrent.Files[I].BytesCompleted));
+        if FOwnedTorrent.Files[I].Length > 0 then
+          PctFile := FOwnedTorrent.Files[I].BytesCompleted / FOwnedTorrent.Files[I].Length
         else
           PctFile := 1.0;
         LI.SubItems.Add(FormatPercent(PctFile));
-        LI.SubItems.Add(PriorityToStr(TorRef.Files[I].Priority));
+        LI.SubItems.Add(PriorityToStr(FOwnedTorrent.Files[I].Priority));
       end;
     finally
       LvFiles.Items.EndUpdate;
@@ -1022,14 +1400,14 @@ begin
   end
   else
   begin
-    for I := 0 to High(TorRef.Files) do
+    for I := 0 to High(FOwnedTorrent.Files) do
     begin
       LI := LvFiles.Items[I];
       if LI.SubItems.Count >= 4 then
       begin
-        LI.SubItems[1] := FormatSize(TorRef.Files[I].BytesCompleted);
-        if TorRef.Files[I].Length > 0 then
-          PctFile := TorRef.Files[I].BytesCompleted / TorRef.Files[I].Length
+        LI.SubItems[1] := FormatSize(FOwnedTorrent.Files[I].BytesCompleted);
+        if FOwnedTorrent.Files[I].Length > 0 then
+          PctFile := FOwnedTorrent.Files[I].BytesCompleted / FOwnedTorrent.Files[I].Length
         else
           PctFile := 1.0;
         LI.SubItems[2] := FormatPercent(PctFile);
@@ -1040,14 +1418,15 @@ end;
 
 procedure TDetailsForm.RefreshTimerTick(Sender: TObject);
 begin
-  if (RpcRef <> nil) and (TorRef <> nil) and RpcRef.FetchTorrentDetails(TorRef) then
-    UpdateDynamicViews;
+  if DetailsPanel <> nil then
+    DetailsPanel.RefreshDetails;
 end;
 
-procedure TDetailsForm.BtnApplyOptionsClick(Sender: TObject);
+procedure TDetailsPanel.BtnApplyOptionsClick(Sender: TObject);
 var
   Args: TJSONObject;
 begin
+  if FCurrentId <= 0 then Exit;
   Args := TJSONObject.Create;
   Args.Add('honorsSessionLimits', ChkHonorSession.Checked);
   Args.Add('downloadLimited', ChkDownLimit.Checked);
@@ -1058,18 +1437,28 @@ begin
   Args.Add('seedRatioLimit', StrToFloatDef(EdtRatioLimit.Text, 2.0));
   Args.Add('peer-limit', SpnPeerLimit.Value);
 
-  if RpcRef.SetTorrentOptions(TorRef.Id, Args) then
-    MessageDlg('Torrent options updated.', mtInformation, [mbOK], 0)
-  else
-    MessageDlg('Failed to update options: ' + RpcRef.LastError, mtError, [mbOK], 0);
+  NotifyModalStart;
+  try
+    if FRpc.SetTorrentOptions(FCurrentId, Args) then
+    begin
+      RefreshDetails;
+      NotifyDataChanged;
+      MessageDlg('Torrent options updated.', mtInformation, [mbOK], 0);
+    end
+    else
+      MessageDlg('Failed to update options: ' + FRpc.LastError, mtError, [mbOK], 0);
+  finally
+    NotifyModalEnd;
+  end;
 end;
 
-procedure TDetailsForm.BtnApplyFilesClick(Sender: TObject);
+procedure TDetailsPanel.BtnApplyFilesClick(Sender: TObject);
 var
   Args: TJSONObject;
   WantedArr, UnwantedArr: TJSONArray;
   I: Integer;
 begin
+  if FCurrentId <= 0 then Exit;
   WantedArr := TJSONArray.Create;
   UnwantedArr := TJSONArray.Create;
   for I := 0 to LvFiles.Items.Count - 1 do
@@ -1091,17 +1480,22 @@ begin
   else
     UnwantedArr.Free;
 
-  if RpcRef.SetTorrentOptions(TorRef.Id, Args) then
-  begin
-    RpcRef.FetchTorrentDetails(TorRef);
-    UpdateDynamicViews;
-    MessageDlg('File selection saved.', mtInformation, [mbOK], 0);
-  end
-  else
-    MessageDlg('Failed to update file selection: ' + RpcRef.LastError, mtError, [mbOK], 0);
+  NotifyModalStart;
+  try
+    if FRpc.SetTorrentOptions(FCurrentId, Args) then
+    begin
+      RefreshDetails;
+      NotifyDataChanged;
+      MessageDlg('File selection saved.', mtInformation, [mbOK], 0);
+    end
+    else
+      MessageDlg('Failed to update file selection: ' + FRpc.LastError, mtError, [mbOK], 0);
+  finally
+    NotifyModalEnd;
+  end;
 end;
 
-procedure TDetailsForm.BtnSelectAllFilesClick(Sender: TObject);
+procedure TDetailsPanel.BtnSelectAllFilesClick(Sender: TObject);
 var
   I: Integer;
 begin
@@ -1109,7 +1503,7 @@ begin
     LvFiles.Items[I].Checked := True;
 end;
 
-procedure TDetailsForm.BtnSelectNoneFilesClick(Sender: TObject);
+procedure TDetailsPanel.BtnSelectNoneFilesClick(Sender: TObject);
 var
   I: Integer;
 begin
@@ -1117,7 +1511,7 @@ begin
     LvFiles.Items[I].Checked := False;
 end;
 
-procedure TDetailsForm.BtnSetFilePriorityClick(Sender: TObject);
+procedure TDetailsPanel.BtnSetFilePriorityClick(Sender: TObject);
 var
   TagPri: Integer;
   KeyName: string;
@@ -1125,6 +1519,7 @@ var
   IdxArr: TJSONArray;
   I: Integer;
 begin
+  if FCurrentId <= 0 then Exit;
   TagPri := TComponent(Sender).Tag;
   if TagPri > 0 then
     KeyName := 'priority-high'
@@ -1145,135 +1540,178 @@ begin
   if IdxArr.Count = 0 then
   begin
     IdxArr.Free;
-    MessageDlg('Select one or more files in the list first.', mtInformation, [mbOK], 0);
+    NotifyModalStart;
+    try
+      MessageDlg('Select one or more files in the list first.', mtInformation, [mbOK], 0);
+    finally
+      NotifyModalEnd;
+    end;
     Exit;
   end;
 
   Args := TJSONObject.Create;
   Args.Add(KeyName, IdxArr);
-  RpcRef.SetTorrentOptions(TorRef.Id, Args);
+  if FRpc.SetTorrentOptions(FCurrentId, Args) then
+    NotifyDataChanged;
 end;
 
-procedure TDetailsForm.BtnRenameFileClick(Sender: TObject);
+procedure TDetailsPanel.BtnRenameFileClick(Sender: TObject);
 var
   OldPath, BaseName, NewName: string;
 begin
+  if FCurrentId <= 0 then Exit;
   if LvFiles.Selected = nil then
   begin
-    MessageDlg('Please select a file to rename.', mtInformation, [mbOK], 0);
+    NotifyModalStart;
+    try
+      MessageDlg('Please select a file to rename.', mtInformation, [mbOK], 0);
+    finally
+      NotifyModalEnd;
+    end;
     Exit;
   end;
   OldPath := LvFiles.Selected.Caption;
   BaseName := ExtractFileName(StringReplace(OldPath, '/', '\', [rfReplaceAll]));
   NewName := BaseName;
-  if InputQuery('Rename File', 'Enter new file name:', NewName) and (Trim(NewName) <> '') and (NewName <> BaseName) then
-  begin
-    if RpcRef.RenameTorrentPath(TorRef.Id, OldPath, Trim(NewName)) then
+  NotifyModalStart;
+  try
+    if InputQuery('Rename File', 'Enter new file name:', NewName) and (Trim(NewName) <> '') and (NewName <> BaseName) then
     begin
-      RpcRef.FetchTorrentDetails(TorRef);
-      LvFiles.Items.Clear;
-      UpdateDynamicViews;
-    end
-    else
-      MessageDlg('Failed to rename file: ' + RpcRef.LastError, mtError, [mbOK], 0);
+      if FRpc.RenameTorrentPath(FCurrentId, OldPath, Trim(NewName)) then
+      begin
+        FRpc.FetchTorrentDetails(FOwnedTorrent);
+        LvFiles.Items.Clear;
+        UpdateDynamicViews;
+        NotifyDataChanged;
+      end
+      else
+        MessageDlg('Failed to rename file: ' + FRpc.LastError, mtError, [mbOK], 0);
+    end;
+  finally
+    NotifyModalEnd;
   end;
 end;
 
-procedure TDetailsForm.BtnEditTrackersClick(Sender: TObject);
+procedure TDetailsPanel.BtnEditTrackersClick(Sender: TObject);
 begin
-  if ShowEditTrackersDialog(Self, RpcRef, TorRef) then
-  begin
-    RpcRef.FetchTorrentDetails(TorRef);
-    UpdateDynamicViews;
+  if FCurrentId <= 0 then Exit;
+  NotifyModalStart;
+  try
+    if ShowEditTrackersDialog(Self, FRpc, FOwnedTorrent) then
+    begin
+      RefreshDetails;
+      NotifyDataChanged;
+    end;
+  finally
+    NotifyModalEnd;
   end;
 end;
 
-procedure TDetailsForm.BtnAddTrackerClick(Sender: TObject);
+procedure TDetailsPanel.BtnAddTrackerClick(Sender: TObject);
 var
   NewUrl: string;
   Args: TJSONObject;
   Arr: TJSONArray;
 begin
+  if FCurrentId <= 0 then Exit;
   NewUrl := '';
-  if InputQuery('Add Tracker', 'Enter tracker announce URL:', NewUrl) and (Trim(NewUrl) <> '') then
-  begin
-    Args := TJSONObject.Create;
-    Arr := TJSONArray.Create;
-    Arr.Add(Trim(NewUrl));
-    Args.Add('trackerAdd', Arr);
-    if RpcRef.SetTorrentOptions(TorRef.Id, Args) then
+  NotifyModalStart;
+  try
+    if InputQuery('Add Tracker', 'Enter tracker announce URL:', NewUrl) and (Trim(NewUrl) <> '') then
     begin
-      RpcRef.FetchTorrentDetails(TorRef);
-      UpdateDynamicViews;
-    end
-    else
-      MessageDlg('Failed to add tracker: ' + RpcRef.LastError, mtError, [mbOK], 0);
+      Args := TJSONObject.Create;
+      Arr := TJSONArray.Create;
+      Arr.Add(Trim(NewUrl));
+      Args.Add('trackerAdd', Arr);
+      if FRpc.SetTorrentOptions(FCurrentId, Args) then
+      begin
+        RefreshDetails;
+        NotifyDataChanged;
+      end
+      else
+        MessageDlg('Failed to add tracker: ' + FRpc.LastError, mtError, [mbOK], 0);
+    end;
+  finally
+    NotifyModalEnd;
   end;
 end;
 
-procedure TDetailsForm.BtnRemoveTrackerClick(Sender: TObject);
+procedure TDetailsPanel.BtnRemoveTrackerClick(Sender: TObject);
 var
   Idx: Integer;
   Args: TJSONObject;
   Arr: TJSONArray;
 begin
-  if (LvTrackers.Selected = nil) or (LvTrackers.Selected.Index > High(TorRef.Trackers)) then
+  if FCurrentId <= 0 then Exit;
+  if (LvTrackers.Selected = nil) or (LvTrackers.Selected.Index > High(FOwnedTorrent.Trackers)) then
   begin
-    MessageDlg('Select a tracker to remove first.', mtInformation, [mbOK], 0);
+    NotifyModalStart;
+    try
+      MessageDlg('Select a tracker to remove first.', mtInformation, [mbOK], 0);
+    finally
+      NotifyModalEnd;
+    end;
     Exit;
   end;
   Idx := LvTrackers.Selected.Index;
   Args := TJSONObject.Create;
   Arr := TJSONArray.Create;
-  Arr.Add(TorRef.Trackers[Idx].Id);
+  Arr.Add(FOwnedTorrent.Trackers[Idx].Id);
   Args.Add('trackerRemove', Arr);
-  if RpcRef.SetTorrentOptions(TorRef.Id, Args) then
+  if FRpc.SetTorrentOptions(FCurrentId, Args) then
   begin
-    RpcRef.FetchTorrentDetails(TorRef);
-    UpdateDynamicViews;
+    RefreshDetails;
+    NotifyDataChanged;
   end
   else
-    MessageDlg('Failed to remove tracker: ' + RpcRef.LastError, mtError, [mbOK], 0);
+  begin
+    NotifyModalStart;
+    try
+      MessageDlg('Failed to remove tracker: ' + FRpc.LastError, mtError, [mbOK], 0);
+    finally
+      NotifyModalEnd;
+    end;
+  end;
 end;
 
-procedure TDetailsForm.BtnToggleTrackerHttpsClick(Sender: TObject);
+procedure TDetailsPanel.BtnToggleTrackerHttpsClick(Sender: TObject);
 var
   OldText, NewText: string;
   Args: TJSONObject;
 begin
-  if Length(TorRef.Trackers) = 0 then Exit;
-  OldText := FormatTrackersAsText(TorRef);
+  if (FCurrentId <= 0) or (Length(FOwnedTorrent.Trackers) = 0) then Exit;
+  OldText := FormatTrackersAsText(FOwnedTorrent);
   NewText := TransformTrackerUrls(OldText, 0);
   if NewText = OldText then Exit;
   Args := TJSONObject.Create;
   Args.Add('trackerList', NewText);
-  if RpcRef.SetTorrentOptions(TorRef.Id, Args) then
+  if FRpc.SetTorrentOptions(FCurrentId, Args) then
   begin
-    RpcRef.FetchTorrentDetails(TorRef);
-    UpdateDynamicViews;
+    RefreshDetails;
+    NotifyDataChanged;
   end
   else
-    MessageDlg('Failed to update trackers: ' + RpcRef.LastError, mtError, [mbOK], 0);
+  begin
+    NotifyModalStart;
+    try
+      MessageDlg('Failed to update trackers: ' + FRpc.LastError, mtError, [mbOK], 0);
+    finally
+      NotifyModalEnd;
+    end;
+  end;
 end;
 
 procedure ShowDetailsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   Torrent: TTorrentItem);
 var
   F: TDetailsForm;
-  PC: TPageControl;
-  TsAct, TsInfo, TsOpts: TTabSheet;
-  BtnClose, BtnApplyOpt, BtnSaveFiles, BtnSelAll, BtnSelNone: TButton;
-  BtnPriHigh, BtnPriNorm, BtnPriLow, BtnRename: TButton;
-  BtnEditTrk, BtnAddTrk, BtnRemTrk, BtnToggleTrk: TButton;
-  Lbl: TLabel;
+  BtnClose: TButton;
+  PnlBottom: TPanel;
 begin
   if Torrent = nil then Exit;
-  Rpc.FetchTorrentDetails(Torrent);
 
   F := TDetailsForm.CreateNew(Owner);
   try
-    F.RpcRef := Rpc;
-    F.TorRef := Torrent;
     F.Caption := Torrent.Name + ' Properties';
     F.Position := poMainFormCenter;
     F.BorderStyle := bsSizeable;
@@ -1282,255 +1720,24 @@ begin
     F.Constraints.MinWidth := 580;
     F.Constraints.MinHeight := 400;
 
-    PC := TPageControl.Create(F);
-    PC.Parent := F;
-    PC.Left := 0; PC.Top := 0; PC.Width := 650; PC.Height := 410;
-    PC.Anchors := [akLeft, akTop, akRight, akBottom];
+    PnlBottom := TPanel.Create(F);
+    PnlBottom.Parent := F;
+    PnlBottom.Align := alBottom;
+    PnlBottom.Height := 42;
+    PnlBottom.BevelOuter := bvNone;
 
-    // Tab 1: Activity
-    TsAct := PC.AddTabSheet;
-    TsAct.Caption := 'Activity';
-    F.LblHaveVal := CreateKeyValLabel(TsAct, 18, 'Have:', '');
-    F.LblDownVal := CreateKeyValLabel(TsAct, 46, 'Downloaded:', '');
-    F.LblUpVal := CreateKeyValLabel(TsAct, 74, 'Uploaded:', '');
-    F.LblStateVal := CreateKeyValLabel(TsAct, 102, 'State:', '');
-    F.LblDownSpdVal := CreateKeyValLabel(TsAct, 130, 'Download Speed:', '');
-    F.LblUpSpdVal := CreateKeyValLabel(TsAct, 158, 'Upload Speed:', '');
-    F.LblRunTimeVal := CreateKeyValLabel(TsAct, 186, 'Running Time:', '');
-    F.LblRemTimeVal := CreateKeyValLabel(TsAct, 214, 'Remaining Time:', '');
-    F.LblLastActVal := CreateKeyValLabel(TsAct, 242, 'Last Activity:', '');
-    F.LblErrVal := CreateKeyValLabel(TsAct, 270, 'Error:', '');
-
-    // Tab 2: Information
-    TsInfo := PC.AddTabSheet;
-    TsInfo.Caption := 'Information';
-    CreateKeyValLabel(TsInfo, 18, 'Total Size:', Format('%s (%d pieces @ %s)',
-      [FormatSize(Torrent.TotalSize), Torrent.PieceCount, FormatSize(Torrent.PieceSize)]));
-    CreateKeyValLabel(TsInfo, 46, 'Hash:', Torrent.HashString);
-    if Torrent.IsPrivate then
-      CreateKeyValLabel(TsInfo, 74, 'Type:', 'Private torrent (DHT and PEX disabled)')
-    else
-      CreateKeyValLabel(TsInfo, 74, 'Type:', 'Public torrent');
-    CreateKeyValLabel(TsInfo, 102, 'Location:', Torrent.DownloadDir);
-    CreateKeyValLabel(TsInfo, 130, 'Creator:', Torrent.Creator);
-    CreateKeyValLabel(TsInfo, 158, 'Added Date:', UnixToDateTimeStr(Torrent.AddedDate));
-    CreateKeyValLabel(TsInfo, 186, 'Completed Date:', UnixToDateTimeStr(Torrent.DoneDate));
-    CreateKeyValLabel(TsInfo, 214, 'Comment:', Torrent.Comment);
-
-    // Tab 3: Peers
-    F.TsPeersTab := PC.AddTabSheet;
-    F.TsPeersTab.Caption := 'Peers';
-    F.LvPeers := TListView.Create(F.TsPeersTab);
-    F.LvPeers.Parent := F.TsPeersTab;
-    F.LvPeers.Align := alClient;
-    F.LvPeers.ViewStyle := vsReport;
-    F.LvPeers.ReadOnly := True;
-    F.LvPeers.RowSelect := True;
-    F.LvPeers.GridLines := True;
-    with F.LvPeers.Columns.Add do begin Caption := 'Address'; Width := 155; end;
-    with F.LvPeers.Columns.Add do begin Caption := 'Client'; Width := 155; end;
-    with F.LvPeers.Columns.Add do begin Caption := '%'; Width := 65; end;
-    with F.LvPeers.Columns.Add do begin Caption := 'Down'; Width := 90; end;
-    with F.LvPeers.Columns.Add do begin Caption := 'Up'; Width := 90; end;
-    with F.LvPeers.Columns.Add do begin Caption := 'Flags'; Width := 65; end;
-
-    // Tab 4: Trackers
-    F.TsTrackersTab := PC.AddTabSheet;
-    F.TsTrackersTab.Caption := 'Trackers';
-    F.LvTrackers := TListView.Create(F.TsTrackersTab);
-    F.LvTrackers.Parent := F.TsTrackersTab;
-    F.LvTrackers.Left := 8; F.LvTrackers.Top := 8; F.LvTrackers.Width := 624; F.LvTrackers.Height := 332;
-    F.LvTrackers.Anchors := [akLeft, akTop, akRight, akBottom];
-    F.LvTrackers.ViewStyle := vsReport;
-    F.LvTrackers.ReadOnly := True;
-    F.LvTrackers.RowSelect := True;
-    F.LvTrackers.GridLines := True;
-    with F.LvTrackers.Columns.Add do begin Caption := 'Tier'; Width := 45; end;
-    with F.LvTrackers.Columns.Add do begin Caption := 'Tracker Announce URL'; Width := 280; end;
-    with F.LvTrackers.Columns.Add do begin Caption := 'Status'; Width := 150; end;
-    with F.LvTrackers.Columns.Add do begin Caption := 'Seeders'; Width := 65; end;
-    with F.LvTrackers.Columns.Add do begin Caption := 'Leechers'; Width := 65; end;
-
-    BtnAddTrk := TButton.Create(F.TsTrackersTab);
-    BtnAddTrk.Parent := F.TsTrackersTab;
-    BtnAddTrk.Left := 8; BtnAddTrk.Top := 346; BtnAddTrk.Width := 110;
-    BtnAddTrk.Anchors := [akLeft, akBottom];
-    BtnAddTrk.Caption := 'Add Tracker...';
-    BtnAddTrk.OnClick := @F.BtnAddTrackerClick;
-
-    BtnEditTrk := TButton.Create(F.TsTrackersTab);
-    BtnEditTrk.Parent := F.TsTrackersTab;
-    BtnEditTrk.Left := 124; BtnEditTrk.Top := 346; BtnEditTrk.Width := 115;
-    BtnEditTrk.Anchors := [akLeft, akBottom];
-    BtnEditTrk.Caption := 'Edit Trackers...';
-    BtnEditTrk.OnClick := @F.BtnEditTrackersClick;
-
-    BtnRemTrk := TButton.Create(F.TsTrackersTab);
-    BtnRemTrk.Parent := F.TsTrackersTab;
-    BtnRemTrk.Left := 245; BtnRemTrk.Top := 346; BtnRemTrk.Width := 120;
-    BtnRemTrk.Anchors := [akLeft, akBottom];
-    BtnRemTrk.Caption := 'Remove Tracker';
-    BtnRemTrk.OnClick := @F.BtnRemoveTrackerClick;
-
-    BtnToggleTrk := TButton.Create(F.TsTrackersTab);
-    BtnToggleTrk.Parent := F.TsTrackersTab;
-    BtnToggleTrk.Left := 371; BtnToggleTrk.Top := 346; BtnToggleTrk.Width := 190;
-    BtnToggleTrk.Anchors := [akLeft, akBottom];
-    BtnToggleTrk.Caption := 'สลับ https:// <-> ht..tps://';
-    BtnToggleTrk.OnClick := @F.BtnToggleTrackerHttpsClick;
-
-    // Tab 5: Files
-    F.TsFilesTab := PC.AddTabSheet;
-    F.TsFilesTab.Caption := 'Files';
-    F.LvFiles := TListView.Create(F.TsFilesTab);
-    F.LvFiles.Parent := F.TsFilesTab;
-    F.LvFiles.Left := 8; F.LvFiles.Top := 8; F.LvFiles.Width := 624; F.LvFiles.Height := 332;
-    F.LvFiles.Anchors := [akLeft, akTop, akRight, akBottom];
-    F.LvFiles.ViewStyle := vsReport;
-    F.LvFiles.Checkboxes := True;
-    F.LvFiles.MultiSelect := True;
-    F.LvFiles.RowSelect := True;
-    F.LvFiles.GridLines := True;
-    with F.LvFiles.Columns.Add do begin Caption := 'File Name'; Width := 305; end;
-    with F.LvFiles.Columns.Add do begin Caption := 'Size'; Width := 85; end;
-    with F.LvFiles.Columns.Add do begin Caption := 'Done'; Width := 85; end;
-    with F.LvFiles.Columns.Add do begin Caption := '%'; Width := 60; end;
-    with F.LvFiles.Columns.Add do begin Caption := 'Priority'; Width := 65; end;
-
-    BtnSelAll := TButton.Create(F.TsFilesTab);
-    BtnSelAll.Parent := F.TsFilesTab;
-    BtnSelAll.Left := 8; BtnSelAll.Top := 346; BtnSelAll.Width := 68;
-    BtnSelAll.Anchors := [akLeft, akBottom];
-    BtnSelAll.Caption := 'All';
-    BtnSelAll.OnClick := @F.BtnSelectAllFilesClick;
-
-    BtnSelNone := TButton.Create(F.TsFilesTab);
-    BtnSelNone.Parent := F.TsFilesTab;
-    BtnSelNone.Left := 80; BtnSelNone.Top := 346; BtnSelNone.Width := 68;
-    BtnSelNone.Anchors := [akLeft, akBottom];
-    BtnSelNone.Caption := 'None';
-    BtnSelNone.OnClick := @F.BtnSelectNoneFilesClick;
-
-    BtnPriHigh := TButton.Create(F.TsFilesTab);
-    BtnPriHigh.Parent := F.TsFilesTab;
-    BtnPriHigh.Left := 156; BtnPriHigh.Top := 346; BtnPriHigh.Width := 72;
-    BtnPriHigh.Anchors := [akLeft, akBottom];
-    BtnPriHigh.Caption := 'Pri: High';
-    BtnPriHigh.Tag := TR_PRI_HIGH;
-    BtnPriHigh.OnClick := @F.BtnSetFilePriorityClick;
-
-    BtnPriNorm := TButton.Create(F.TsFilesTab);
-    BtnPriNorm.Parent := F.TsFilesTab;
-    BtnPriNorm.Left := 232; BtnPriNorm.Top := 346; BtnPriNorm.Width := 76;
-    BtnPriNorm.Anchors := [akLeft, akBottom];
-    BtnPriNorm.Caption := 'Pri: Norm';
-    BtnPriNorm.Tag := TR_PRI_NORMAL;
-    BtnPriNorm.OnClick := @F.BtnSetFilePriorityClick;
-
-    BtnPriLow := TButton.Create(F.TsFilesTab);
-    BtnPriLow.Parent := F.TsFilesTab;
-    BtnPriLow.Left := 312; BtnPriLow.Top := 346; BtnPriLow.Width := 72;
-    BtnPriLow.Anchors := [akLeft, akBottom];
-    BtnPriLow.Caption := 'Pri: Low';
-    BtnPriLow.Tag := TR_PRI_LOW;
-    BtnPriLow.OnClick := @F.BtnSetFilePriorityClick;
-
-    BtnRename := TButton.Create(F.TsFilesTab);
-    BtnRename.Parent := F.TsFilesTab;
-    BtnRename.Left := 390; BtnRename.Top := 346; BtnRename.Width := 85;
-    BtnRename.Anchors := [akLeft, akBottom];
-    BtnRename.Caption := 'Rename...';
-    BtnRename.OnClick := @F.BtnRenameFileClick;
-
-    BtnSaveFiles := TButton.Create(F.TsFilesTab);
-    BtnSaveFiles.Parent := F.TsFilesTab;
-    BtnSaveFiles.Left := 485; BtnSaveFiles.Top := 346; BtnSaveFiles.Width := 145;
-    BtnSaveFiles.Anchors := [akRight, akBottom];
-    BtnSaveFiles.Caption := 'Apply Wanted Files';
-    BtnSaveFiles.OnClick := @F.BtnApplyFilesClick;
-
-    // Tab 6: Options
-    TsOpts := PC.AddTabSheet;
-    TsOpts.Caption := 'Options';
-
-    F.ChkHonorSession := TCheckBox.Create(TsOpts);
-    F.ChkHonorSession.Parent := TsOpts;
-    F.ChkHonorSession.Left := 20; F.ChkHonorSession.Top := 20;
-    F.ChkHonorSession.Caption := 'Honor global session bandwidth limits';
-    F.ChkHonorSession.Checked := Torrent.HonorsSessionLimits;
-
-    F.ChkDownLimit := TCheckBox.Create(TsOpts);
-    F.ChkDownLimit.Parent := TsOpts;
-    F.ChkDownLimit.Left := 20; F.ChkDownLimit.Top := 56;
-    F.ChkDownLimit.Caption := 'Limit download speed (KB/s):';
-    F.ChkDownLimit.Checked := Torrent.DownloadLimited;
-
-    F.SpnDownLimit := TSpinEdit.Create(TsOpts);
-    F.SpnDownLimit.Parent := TsOpts;
-    F.SpnDownLimit.Left := 230; F.SpnDownLimit.Top := 52; F.SpnDownLimit.Width := 100;
-    F.SpnDownLimit.MaxValue := 1000000;
-    F.SpnDownLimit.Value := Torrent.DownloadLimit;
-
-    F.ChkUpLimit := TCheckBox.Create(TsOpts);
-    F.ChkUpLimit.Parent := TsOpts;
-    F.ChkUpLimit.Left := 20; F.ChkUpLimit.Top := 92;
-    F.ChkUpLimit.Caption := 'Limit upload speed (KB/s):';
-    F.ChkUpLimit.Checked := Torrent.UploadLimited;
-
-    F.SpnUpLimit := TSpinEdit.Create(TsOpts);
-    F.SpnUpLimit.Parent := TsOpts;
-    F.SpnUpLimit.Left := 230; F.SpnUpLimit.Top := 88; F.SpnUpLimit.Width := 100;
-    F.SpnUpLimit.MaxValue := 1000000;
-    F.SpnUpLimit.Value := Torrent.UploadLimit;
-
-    Lbl := TLabel.Create(TsOpts);
-    Lbl.Parent := TsOpts;
-    Lbl.Left := 20; Lbl.Top := 134;
-    Lbl.Caption := 'Seed ratio limit:';
-
-    F.CmbRatioMode := TComboBox.Create(TsOpts);
-    F.CmbRatioMode.Parent := TsOpts;
-    F.CmbRatioMode.Left := 140; F.CmbRatioMode.Top := 130; F.CmbRatioMode.Width := 180;
-    F.CmbRatioMode.Style := csDropDownList;
-    F.CmbRatioMode.Items.Add('Use global settings');
-    F.CmbRatioMode.Items.Add('Stop seeding at ratio:');
-    F.CmbRatioMode.Items.Add('Seed regardless of ratio');
-    if (Torrent.SeedRatioMode >= 0) and (Torrent.SeedRatioMode <= 2) then
-      F.CmbRatioMode.ItemIndex := Torrent.SeedRatioMode
-    else
-      F.CmbRatioMode.ItemIndex := 0;
-
-    F.EdtRatioLimit := TEdit.Create(TsOpts);
-    F.EdtRatioLimit.Parent := TsOpts;
-    F.EdtRatioLimit.Left := 330; F.EdtRatioLimit.Top := 130; F.EdtRatioLimit.Width := 80;
-    F.EdtRatioLimit.Text := Format('%.2f', [Torrent.SeedRatioLimit]);
-
-    Lbl := TLabel.Create(TsOpts);
-    Lbl.Parent := TsOpts;
-    Lbl.Left := 20; Lbl.Top := 174;
-    Lbl.Caption := 'Maximum peers:';
-
-    F.SpnPeerLimit := TSpinEdit.Create(TsOpts);
-    F.SpnPeerLimit.Parent := TsOpts;
-    F.SpnPeerLimit.Left := 140; F.SpnPeerLimit.Top := 170; F.SpnPeerLimit.Width := 100;
-    F.SpnPeerLimit.MaxValue := 2000;
-    F.SpnPeerLimit.Value := Torrent.PeerLimit;
-
-    BtnApplyOpt := TButton.Create(TsOpts);
-    BtnApplyOpt.Parent := TsOpts;
-    BtnApplyOpt.Left := 20; BtnApplyOpt.Top := 220; BtnApplyOpt.Width := 130;
-    BtnApplyOpt.Caption := 'Apply Options';
-    BtnApplyOpt.OnClick := @F.BtnApplyOptionsClick;
-
-    BtnClose := TButton.Create(F);
-    BtnClose.Parent := F;
-    BtnClose.Left := 550; BtnClose.Top := 418; BtnClose.Width := 88;
-    BtnClose.Anchors := [akRight, akBottom];
+    BtnClose := TButton.Create(PnlBottom);
+    BtnClose.Parent := PnlBottom;
+    BtnClose.Left := 550; BtnClose.Top := 8; BtnClose.Width := 88;
+    BtnClose.Anchors := [akRight, akTop];
     BtnClose.Caption := 'Close';
     BtnClose.Cancel := True;
     BtnClose.ModalResult := mrClose;
 
-    F.UpdateDynamicViews;
+    F.DetailsPanel := TDetailsPanel.CreatePanel(F, Rpc);
+    F.DetailsPanel.Parent := F;
+    F.DetailsPanel.Align := alClient;
+    F.DetailsPanel.LoadTorrent(Torrent.Id);
 
     F.RefreshTimer := TTimer.Create(F);
     F.RefreshTimer.Interval := 2000;

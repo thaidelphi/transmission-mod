@@ -99,8 +99,11 @@ type
     FCmbTracker: TComboBox;
     FEdtSearch: TEdit;
 
-    // Main List
+    // Main List & Bottom Embedded Properties Panel
     FLstTorrents: TListBox;
+    FSplitDetails: TSplitter;
+    FDetailsPanel: TDetailsPanel;
+    FDetailsHeight: Integer;
 
     // Bottom Status Bar
     FPnlStatusBar: TPanel;
@@ -123,6 +126,7 @@ type
     procedure BuildToolbar;
     procedure BuildFilterBar;
     procedure BuildTorrentList;
+    procedure BuildDetailsPanel;
     procedure BuildStatusBar;
     procedure BuildTrayIcon;
     procedure RenderToolbarIcons;
@@ -144,6 +148,8 @@ type
     procedure CheckCompletedNotifications;
     procedure RefreshFromRpc;
     procedure FixTopBarOrder;
+    procedure FixBottomPanelOrder;
+    procedure SyncBottomDetailsPanel;
     procedure ApplyListItemHeight;
     procedure BeginModalPause;
     procedure EndModalPause;
@@ -155,9 +161,15 @@ type
     procedure TrayPopupBefore(Sender: TObject);
     procedure FilterBarResize(Sender: TObject);
     procedure StatusBarResize(Sender: TObject);
+    procedure SplitDetailsMoved(Sender: TObject);
+    procedure DetailsPanelDataChanged(Sender: TObject);
+    procedure DetailsPanelModalStart(Sender: TObject);
+    procedure DetailsPanelModalEnd(Sender: TObject);
 
     procedure LstTorrentsDrawItem(Control: TWinControl; Index: Integer; ARect: TRect; State: TOwnerDrawState);
     procedure LstTorrentsMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure LstTorrentsMouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
+    procedure LstTorrentsClick(Sender: TObject);
     procedure LstTorrentsDblClick(Sender: TObject);
     procedure LstTorrentsSelectionChange(Sender: TObject; User: Boolean);
     procedure LstTorrentsResize(Sender: TObject);
@@ -287,6 +299,7 @@ begin
   try
     Width := Ini.ReadInteger('Window', 'Width', Width);
     Height := Ini.ReadInteger('Window', 'Height', Height);
+    FDetailsHeight := EnsureRange(Ini.ReadInteger('Window', 'DetailsHeight', 260), 160, 480);
     FCompactView := Ini.ReadBool('View', 'CompactView', True);
     FSortMode := TSortMode(EnsureRange(Ini.ReadInteger('View', 'SortMode', 0), 0, Ord(High(TSortMode))));
     FReverseSort := Ini.ReadBool('View', 'ReverseSort', False);
@@ -339,6 +352,9 @@ begin
         Ini.WriteInteger('Window', 'Width', Width);
         Ini.WriteInteger('Window', 'Height', Height);
       end;
+      if (FDetailsPanel <> nil) and FDetailsPanel.Visible then
+        FDetailsHeight := FDetailsPanel.Height;
+      Ini.WriteInteger('Window', 'DetailsHeight', FDetailsHeight);
       Ini.WriteBool('View', 'CompactView', FCompactView);
       Ini.WriteInteger('View', 'SortMode', Ord(FSortMode));
       Ini.WriteBool('View', 'ReverseSort', FReverseSort);
@@ -388,6 +404,7 @@ begin
   FUpdatingFilterCombo := False;
   FModalDepth := 0;
   FSessionSyncCounter := 0;
+  FDetailsHeight := 260;
 
   FCompactView := True;
   FSortMode := smQueue;
@@ -401,6 +418,7 @@ begin
   BuildToolbar;
   BuildFilterBar;
   BuildStatusBar;
+  BuildDetailsPanel;
   BuildTorrentList;
   BuildTrayIcon;
   FixTopBarOrder;
@@ -1004,6 +1022,27 @@ begin
   StatusBarResize(FPnlStatusBar);
 end;
 
+procedure TMainForm.BuildDetailsPanel;
+begin
+  FDetailsPanel := TDetailsPanel.CreatePanel(Self, FRpc);
+  FDetailsPanel.Parent := Self;
+  FDetailsPanel.Align := alBottom;
+  FDetailsPanel.Height := 260;
+  FDetailsPanel.Constraints.MinHeight := 160;
+  FDetailsPanel.Visible := False;
+  FDetailsPanel.OnDataChanged := @DetailsPanelDataChanged;
+  FDetailsPanel.OnModalStart := @DetailsPanelModalStart;
+  FDetailsPanel.OnModalEnd := @DetailsPanelModalEnd;
+
+  FSplitDetails := TSplitter.Create(Self);
+  FSplitDetails.Parent := Self;
+  FSplitDetails.Align := alBottom;
+  FSplitDetails.Height := 5;
+  FSplitDetails.MinSize := 140;
+  FSplitDetails.Visible := False;
+  FSplitDetails.OnMoved := @SplitDetailsMoved;
+end;
+
 procedure TMainForm.BuildTorrentList;
 begin
   FLstTorrents := TListBox.Create(Self);
@@ -1019,6 +1058,8 @@ begin
   FLstTorrents.PopupMenu := FTorrentPopup;
   FLstTorrents.OnDrawItem := @LstTorrentsDrawItem;
   FLstTorrents.OnMouseDown := @LstTorrentsMouseDown;
+  FLstTorrents.OnMouseUp := @LstTorrentsMouseUp;
+  FLstTorrents.OnClick := @LstTorrentsClick;
   FLstTorrents.OnDblClick := @LstTorrentsDblClick;
   FLstTorrents.OnSelectionChange := @LstTorrentsSelectionChange;
   FLstTorrents.OnResize := @LstTorrentsResize;
@@ -1287,6 +1328,98 @@ begin
   end;
 end;
 
+procedure TMainForm.FixBottomPanelOrder;
+var
+  BottomY: Integer;
+begin
+  if (FPnlStatusBar = nil) or (FDetailsPanel = nil) or (FSplitDetails = nil) then Exit;
+  DisableAlign;
+  try
+    BottomY := ClientHeight;
+    if FPnlStatusBar.Visible then
+    begin
+      BottomY := BottomY - FPnlStatusBar.Height;
+      FPnlStatusBar.Top := BottomY;
+    end;
+    if FDetailsPanel.Visible then
+    begin
+      BottomY := BottomY - FDetailsPanel.Height;
+      FDetailsPanel.Top := BottomY;
+    end;
+    if FSplitDetails.Visible then
+    begin
+      BottomY := BottomY - FSplitDetails.Height;
+      FSplitDetails.Top := BottomY;
+    end;
+  finally
+    EnableAlign;
+  end;
+end;
+
+procedure TMainForm.SyncBottomDetailsPanel;
+var
+  T: TTorrentItem;
+  MaxH, DesiredH: Integer;
+begin
+  if (FDetailsPanel = nil) or (FSplitDetails = nil) then Exit;
+  T := GetFirstSelectedTorrent;
+  if T <> nil then
+  begin
+    if not FDetailsPanel.Visible then
+    begin
+      MaxH := Max(180, ClientHeight - 160);
+      DesiredH := EnsureRange(FDetailsHeight, 160, MaxH);
+      DisableAlign;
+      try
+        FDetailsPanel.Height := DesiredH;
+        FDetailsPanel.Visible := True;
+        FSplitDetails.Visible := True;
+      finally
+        EnableAlign;
+      end;
+      FixBottomPanelOrder;
+    end;
+    FDetailsPanel.LoadTorrent(T.Id);
+  end
+  else
+  begin
+    if FDetailsPanel.Visible then
+    begin
+      FDetailsHeight := FDetailsPanel.Height;
+      DisableAlign;
+      try
+        FSplitDetails.Visible := False;
+        FDetailsPanel.Visible := False;
+      finally
+        EnableAlign;
+      end;
+      FixBottomPanelOrder;
+    end;
+    FDetailsPanel.LoadTorrent(0);
+  end;
+end;
+
+procedure TMainForm.SplitDetailsMoved(Sender: TObject);
+begin
+  if (FDetailsPanel <> nil) and FDetailsPanel.Visible then
+    FDetailsHeight := FDetailsPanel.Height;
+end;
+
+procedure TMainForm.DetailsPanelDataChanged(Sender: TObject);
+begin
+  RefreshFromRpc;
+end;
+
+procedure TMainForm.DetailsPanelModalStart(Sender: TObject);
+begin
+  BeginModalPause;
+end;
+
+procedure TMainForm.DetailsPanelModalEnd(Sender: TObject);
+begin
+  EndModalPause;
+end;
+
 procedure TMainForm.ApplyListItemHeight;
 var
   I: Integer;
@@ -1347,10 +1480,25 @@ begin
     if Idx < 0 then
     begin
       FLstTorrents.ClearSelection;
+      FLstTorrents.ItemIndex := -1;
       SaveSelectedIds;
       UpdateActionStates;
     end;
   end;
+end;
+
+procedure TMainForm.LstTorrentsMouseUp(Sender: TObject; Button: TMouseButton;
+  Shift: TShiftState; X, Y: Integer);
+begin
+  // อัปเดตพาเนล Properties ด้านล่างทุกครั้งหลังปล่อยเมาส์ เพื่อให้ตามรายการที่ Win32 ListBox เพิ่งเลือกทันที
+  SaveSelectedIds;
+  UpdateActionStates;
+end;
+
+procedure TMainForm.LstTorrentsClick(Sender: TObject);
+begin
+  SaveSelectedIds;
+  UpdateActionStates;
 end;
 
 procedure TMainForm.TorrentPopupBefore(Sender: TObject);
@@ -1706,6 +1854,7 @@ begin
   FBtnRemove.Enabled := HasSel;
   FBtnProperties.Enabled := HasSel;
   UpdateTorrentMenuStates;
+  SyncBottomDetailsPanel;
 end;
 
 procedure TMainForm.UpdateStatusBarText;
@@ -1836,6 +1985,8 @@ begin
       UpdateStateFilterCounts;
       RebuildTrackerFilterList;
       ApplyFilterAndSort;
+      if (FDetailsPanel <> nil) and FDetailsPanel.Visible and (FDetailsPanel.CurrentTorrentId > 0) then
+        FDetailsPanel.RefreshDetails;
     end;
     UpdateStatusBarText;
   finally
@@ -2242,6 +2393,7 @@ procedure TMainForm.ActToggleStatusbar(Sender: TObject);
 begin
   FPnlStatusBar.Visible := not FPnlStatusBar.Visible;
   MiStatusbar.Checked := FPnlStatusBar.Visible;
+  FixBottomPanelOrder;
   SaveAppSettings;
 end;
 
