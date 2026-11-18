@@ -137,7 +137,8 @@ procedure ShowDetailsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   Torrent: TTorrentItem);
 
 function ShowPrefsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
-  WebSrv: TTransmissionWebServer; var Config: TSessionConfig): Boolean;
+  WebSrv: TTransmissionWebServer; var Config: TSessionConfig;
+  var MinimizeToTray: Boolean): Boolean;
 
 function ShowSessionDialog(Owner: TComponent; Rpc: TTransmissionRpcClient): Boolean;
 
@@ -1994,6 +1995,9 @@ type
     EdtWebUser: TEdit;
     EdtWebPass: TEdit;
 
+    RbCloseExit: TRadioButton;
+    RbCloseTray: TRadioButton;
+
     procedure BtnBrowseSaveDirClick(Sender: TObject);
     procedure BtnTestPortClick(Sender: TObject);
     procedure BtnUpdateBlocklistClick(Sender: TObject);
@@ -2044,11 +2048,12 @@ begin
 end;
 
 function ShowPrefsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
-  WebSrv: TTransmissionWebServer; var Config: TSessionConfig): Boolean;
+  WebSrv: TTransmissionWebServer; var Config: TSessionConfig;
+  var MinimizeToTray: Boolean): Boolean;
 var
   F: TPrefsForm;
   PC: TPageControl;
-  TsSpeed, TsDown, TsSeed, TsPriv, TsNet, TsRemote: TTabSheet;
+  TsSpeed, TsDown, TsSeed, TsPriv, TsNet, TsRemote, TsDesktop: TTabSheet;
   Lbl: TLabel;
   BtnBrowse, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel: TButton;
   Args: TJSONObject;
@@ -2063,12 +2068,12 @@ begin
     F.Caption := 'Transmission Preferences';
     F.Position := poMainFormCenter;
     F.BorderStyle := bsDialog;
-    F.ClientWidth := 500;
+    F.ClientWidth := 540;
     F.ClientHeight := 370;
 
     PC := TPageControl.Create(F);
     PC.Parent := F;
-    PC.Left := 8; PC.Top := 8; PC.Width := 484; PC.Height := 312;
+    PC.Left := 8; PC.Top := 8; PC.Width := 524; PC.Height := 312;
 
     // 1. Speed Tab
     TsSpeed := PC.AddTabSheet;
@@ -2422,22 +2427,55 @@ begin
     if WebSrv <> nil then
       F.EdtWebPass.Text := WebSrv.Password;
 
+    // 7. Desktop / Close Behavior Tab (ตั้งค่าเมื่อกดปุ่มปิดหน้าต่าง X)
+    TsDesktop := PC.AddTabSheet;
+    TsDesktop.Caption := 'Desktop';
+
+    Lbl := TLabel.Create(TsDesktop);
+    Lbl.Parent := TsDesktop;
+    Lbl.Left := 16; Lbl.Top := 20;
+    Lbl.Font.Style := [fsBold];
+    Lbl.Caption := 'Window Close Button Behavior (เมื่อกดปุ่มปิด X ของโปรแกรม)';
+
+    F.RbCloseExit := TRadioButton.Create(TsDesktop);
+    F.RbCloseExit.Parent := TsDesktop;
+    F.RbCloseExit.Left := 28; F.RbCloseExit.Top := 54;
+    F.RbCloseExit.Caption := 'Exit program immediately (ปิดโปรแกรมทันที)';
+    F.RbCloseExit.Checked := not MinimizeToTray;
+
+    F.RbCloseTray := TRadioButton.Create(TsDesktop);
+    F.RbCloseTray.Parent := TsDesktop;
+    F.RbCloseTray.Left := 28; F.RbCloseTray.Top := 86;
+    F.RbCloseTray.Caption := 'Minimize to system tray (ย่อไปไว้มุมขวาล่าง)';
+    F.RbCloseTray.Checked := MinimizeToTray;
+
+    Lbl := TLabel.Create(TsDesktop);
+    Lbl.Parent := TsDesktop;
+    Lbl.Left := 28; Lbl.Top := 126; Lbl.Width := 450; Lbl.Height := 80;
+    Lbl.AutoSize := False;
+    Lbl.WordWrap := True;
+    Lbl.Font.Color := clGrayText;
+    Lbl.Caption :=
+      'คำแนะนำ: หากเลือก "Minimize to system tray" การกดปุ่มปิด (X) จะซ่อนหน้าต่างลงไปอยู่ที่ไอคอนมุมขวาล่างของทาสก์บาร์ ' +
+      'โดยโปรแกรมจะยังทำงานต่อเบื้องหลัง สามารถดับเบิลคลิกที่ไอคอนเพื่อเปิดหน้าต่างกลับมา หรือคลิกขวาแล้วเลือก Quit (หรือเมนู File -> Quit) เพื่อปิดโปรแกรมถาวร';
+
     BtnOK := TButton.Create(F);
     BtnOK.Parent := F;
-    BtnOK.Left := 324; BtnOK.Top := 330; BtnOK.Width := 80;
+    BtnOK.Left := 364; BtnOK.Top := 330; BtnOK.Width := 80;
     BtnOK.Caption := 'OK';
     BtnOK.Default := True;
     BtnOK.ModalResult := mrOk;
 
     BtnCancel := TButton.Create(F);
     BtnCancel.Parent := F;
-    BtnCancel.Left := 412; BtnCancel.Top := 330; BtnCancel.Width := 80;
+    BtnCancel.Left := 452; BtnCancel.Top := 330; BtnCancel.Width := 80;
     BtnCancel.Caption := 'Cancel';
     BtnCancel.Cancel := True;
     BtnCancel.ModalResult := mrCancel;
 
     if F.ShowModal = mrOk then
     begin
+      MinimizeToTray := F.RbCloseTray.Checked;
       Args := TJSONObject.Create;
       Args.Add('speed-limit-up-enabled', F.ChkUpLimit.Checked);
       Args.Add('speed-limit-up', F.SpnUpLimit.Value);

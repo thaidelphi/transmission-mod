@@ -69,6 +69,8 @@ type
     FUpdatingFilterCombo: Boolean;
     FModalDepth: Integer;
     FSessionSyncCounter: Integer;
+    FMinimizeToTray: Boolean;
+    FForceQuit: Boolean;
 
     // Top Menu
     FMainMenu: TMainMenu;
@@ -156,6 +158,8 @@ type
     procedure EndModalPause;
 
     // Event Handlers
+    procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
+    procedure AppQueryEndSession(var Cancel: Boolean);
     procedure FormDropFiles(Sender: TObject; const FileNames: array of string);
     procedure TimerRefreshTimer(Sender: TObject);
     procedure TorrentPopupBefore(Sender: TObject);
@@ -216,6 +220,7 @@ type
     procedure ActOptionsPopupClick(Sender: TObject);
     procedure ActStatsPopupClick(Sender: TObject);
     procedure ActToggleMainWindow(Sender: TObject);
+    procedure ActToggleMinimizeToTray(Sender: TObject);
     procedure ActQuit(Sender: TObject);
   public
   end;
@@ -303,6 +308,7 @@ begin
     Width := Ini.ReadInteger('Window', 'Width', Width);
     Height := Ini.ReadInteger('Window', 'Height', Height);
     FDetailsHeight := EnsureRange(Ini.ReadInteger('Window', 'DetailsHeight', 260), 160, 480);
+    FMinimizeToTray := Ini.ReadBool('Window', 'MinimizeToTray', False);
     FCompactView := Ini.ReadBool('View', 'CompactView', True);
     FSortMode := TSortMode(EnsureRange(Ini.ReadInteger('View', 'SortMode', 0), 0, Ord(High(TSortMode))));
     FReverseSort := Ini.ReadBool('View', 'ReverseSort', False);
@@ -358,6 +364,7 @@ begin
       if (FDetailsPanel <> nil) and FDetailsPanel.Visible then
         FDetailsHeight := FDetailsPanel.Height;
       Ini.WriteInteger('Window', 'DetailsHeight', FDetailsHeight);
+      Ini.WriteBool('Window', 'MinimizeToTray', FMinimizeToTray);
       Ini.WriteBool('View', 'CompactView', FCompactView);
       Ini.WriteInteger('View', 'SortMode', Ord(FSortMode));
       Ini.WriteBool('View', 'ReverseSort', FReverseSort);
@@ -408,6 +415,10 @@ begin
   FModalDepth := 0;
   FSessionSyncCounter := 0;
   FDetailsHeight := 260;
+  FMinimizeToTray := False;
+  FForceQuit := False;
+  OnCloseQuery := @FormCloseQuery;
+  Application.OnQueryEndSession := @AppQueryEndSession;
 
   FCompactView := True;
   FSortMode := smQueue;
@@ -628,6 +639,7 @@ begin
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Statistics...'; PItem.OnClick := @ActShowStatistics; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := '-'; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Block All Tracker Packets'; PItem.OnClick := @ActToggleGlobalTrackerPause; FOptionsPopup.Items.Add(PItem);
+  PItem := TMenuItem.Create(Self); PItem.Caption := 'Minimize to Tray on Close'; PItem.OnClick := @ActToggleMinimizeToTray; FOptionsPopup.Items.Add(PItem);
   PItem := TMenuItem.Create(Self); PItem.Caption := 'Compact View'; PItem.OnClick := @ActToggleCompactView; FOptionsPopup.Items.Add(PItem);
 end;
 
@@ -2429,7 +2441,7 @@ var
 begin
   BeginModalPause;
   try
-    Ok := ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig);
+    Ok := ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig, FMinimizeToTray);
   finally
     EndModalPause;
   end;
@@ -2592,6 +2604,8 @@ begin
   begin
     if Pos('Compact View', FOptionsPopup.Items[I].Caption) > 0 then
       FOptionsPopup.Items[I].Checked := FCompactView
+    else if Pos('Minimize to Tray', FOptionsPopup.Items[I].Caption) > 0 then
+      FOptionsPopup.Items[I].Checked := FMinimizeToTray
     else if Pos('Block All Tracker', FOptionsPopup.Items[I].Caption) > 0 then
       FOptionsPopup.Items[I].Checked := FSessionConfig.TrackerPaused;
   end;
@@ -2610,6 +2624,31 @@ begin
   FStatsPopup.PopUp(P.X, P.Y);
 end;
 
+procedure TMainForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
+begin
+  // หากเปิดตั้งค่า "ย่อไปมุมขวาล่างเมื่อปิด" และไม่ได้สั่ง Quit โดยตรง ให้ซ่อนหน้าต่างแทนการปิดโปรแกรม
+  if FMinimizeToTray and (not FForceQuit) and (not Application.Terminated) then
+  begin
+    CanClose := False;
+    Hide;
+    if FTrayIcon <> nil then
+    begin
+      FTrayIcon.Visible := True;
+      FTrayIcon.BalloonTitle := 'Transmission';
+      FTrayIcon.BalloonHint := 'โปรแกรมถูกย่อไปไว้มุมขวาล่างแล้ว (คลิกขวาที่ไอคอน -> Quit เพื่อปิดโปรแกรม)';
+      FTrayIcon.ShowBalloonHint;
+    end;
+    Exit;
+  end;
+  CanClose := True;
+end;
+
+procedure TMainForm.AppQueryEndSession(var Cancel: Boolean);
+begin
+  FForceQuit := True;
+  Cancel := False;
+end;
+
 procedure TMainForm.ActToggleMainWindow(Sender: TObject);
 begin
   if Visible then
@@ -2620,11 +2659,20 @@ begin
     if WindowState = wsMinimized then
       WindowState := wsNormal;
     BringToFront;
+    if CanFocus then
+      SetFocus;
   end;
+end;
+
+procedure TMainForm.ActToggleMinimizeToTray(Sender: TObject);
+begin
+  FMinimizeToTray := not FMinimizeToTray;
+  SaveAppSettings;
 end;
 
 procedure TMainForm.ActQuit(Sender: TObject);
 begin
+  FForceQuit := True;
   Close;
 end;
 
