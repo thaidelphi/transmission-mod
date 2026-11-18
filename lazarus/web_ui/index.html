@@ -409,6 +409,55 @@
       z-index: 3000;
       min-width: 210px;
     }
+    .tracker-editor {
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .tracker-toolbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tracker-toolbar-label {
+      font-weight: 600;
+      margin-right: auto;
+      font-size: 12.5px;
+    }
+    .trk-btn {
+      padding: 3px 9px;
+      border-radius: 4px;
+      background: var(--modal-bg);
+      cursor: pointer;
+      font-size: 11.5px;
+      font-weight: 500;
+      border: 1px solid;
+    }
+    .trk-btn:hover { filter: brightness(0.95); }
+    .trk-btn-toggle { border-color: #1677ff; color: #1677ff; }
+    .trk-btn-obf { border-color: #d97706; color: #d97706; }
+    .trk-btn-restore { border-color: #16a34a; color: #16a34a; }
+    .tracker-textarea {
+      width: 100%;
+      min-height: 92px;
+      padding: 8px;
+      border: 1px solid var(--border-col);
+      border-radius: 4px;
+      background: var(--bg-main);
+      color: var(--text-main);
+      font-family: Consolas, monospace;
+      font-size: 11.5px;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+    .tracker-save-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tracker-save-msg { font-size: 11.5px; color: var(--text-sub); }
   </style>
 </head>
 <body>
@@ -1000,9 +1049,34 @@
           `</tbody></table>`;
       } else if (currentInspTab === 'trackers') {
         const trks = t.trackerStats || [];
-        box.innerHTML = `<table class="grid-table"><thead><tr><th>Tier</th><th>Tracker URL</th><th>Status</th><th>Seeds</th></tr></thead><tbody>` +
-          trks.map(k => `<tr><td>${(k.tier || 0) + 1}</td><td>${escapeHtml(k.announce)}</td><td>${escapeHtml(k.lastAnnounceResult)}</td><td>${k.seederCount >= 0 ? k.seederCount : '-'}</td></tr>`).join('') +
-          `</tbody></table>`;
+        const rowsHtml = trks.map(k => `<tr><td>${(k.tier || 0) + 1}</td><td>${escapeHtml(k.announce)}</td><td>${escapeHtml(k.lastAnnounceResult)}</td><td>${k.seederCount >= 0 ? k.seederCount : '-'}</td></tr>`).join('');
+        const existingTa = document.getElementById('txtTrackerList');
+        const existingBody = document.getElementById('trkStatusBody');
+        if (existingTa && existingBody && window.trackerEditorTorId === t.id) {
+          existingBody.innerHTML = rowsHtml;
+          if (!window.trackerEditorDirty && document.activeElement !== existingTa) {
+            existingTa.value = formatTrackerListText(trks);
+          }
+          return;
+        }
+        window.trackerEditorTorId = t.id;
+        window.trackerEditorDirty = false;
+        box.innerHTML = `
+          <div class="tracker-editor">
+            <div class="tracker-toolbar">
+              <span class="tracker-toolbar-label">Tracker List:</span>
+              <button type="button" class="trk-btn trk-btn-toggle" onclick="convertTrackerList('toggle')">&#8644; สลับ https:// &harr; ht..tps://</button>
+              <button type="button" class="trk-btn trk-btn-obf" onclick="convertTrackerList('to_dots')">&#10145; เป็น ht..tps://</button>
+              <button type="button" class="trk-btn trk-btn-restore" onclick="convertTrackerList('to_std')">&#11013; กลับเป็น https://</button>
+            </div>
+            <textarea id="txtTrackerList" class="tracker-textarea" oninput="window.trackerEditorDirty = true">${escapeHtml(formatTrackerListText(trks))}</textarea>
+            <div class="tracker-save-row">
+              <button type="button" class="btn primary" onclick="saveTrackerList(${t.id})">Save Trackers</button>
+              <span id="trkSaveStatus" class="tracker-save-msg"></span>
+            </div>
+          </div>
+          <table class="grid-table"><thead><tr><th>Tier</th><th>Tracker URL</th><th>Status</th><th>Seeds</th></tr></thead>
+          <tbody id="trkStatusBody">${rowsHtml}</tbody></table>`;
       } else if (currentInspTab === 'files') {
         const files = t.files || [];
         const stats = t.fileStats || [];
@@ -1019,6 +1093,47 @@
       const args = { ids: [torId] };
       args[wanted ? 'files-wanted' : 'files-unwanted'] = [fileIdx];
       await rpcCall('torrent-set', args);
+    }
+
+    function formatTrackerListText(trks) {
+      let out = [];
+      let lastTier = -1;
+      trks.forEach(k => {
+        const tier = k.tier || 0;
+        if (lastTier >= 0 && tier !== lastTier) out.push('');
+        out.push(k.announce || '');
+        lastTier = tier;
+      });
+      return out.join('\n');
+    }
+
+    function convertTrackerList(mode) {
+      const ta = document.getElementById('txtTrackerList');
+      if (!ta) return;
+      const val = ta.value;
+      const toDots = mode === 'to_dots' || (mode === 'toggle' && /https?:\/\//i.test(val));
+      if (toDots) {
+        ta.value = val.replace(/https:\/\//gi, 'ht..tps://').replace(/http:\/\//gi, 'ht..tp://');
+      } else {
+        ta.value = val.replace(/ht\.\.tps:\/\//gi, 'https://').replace(/ht\.\.tp:\/\//gi, 'http://');
+      }
+      window.trackerEditorDirty = true;
+      const st = document.getElementById('trkSaveStatus');
+      if (st) st.textContent = 'Converted (click Save Trackers to apply)';
+    }
+
+    async function saveTrackerList(torId) {
+      const ta = document.getElementById('txtTrackerList');
+      const st = document.getElementById('trkSaveStatus');
+      if (!ta) return;
+      const res = await rpcCall('torrent-set', { ids: [torId], trackerList: ta.value });
+      if (res.result === 'success') {
+        window.trackerEditorDirty = false;
+        if (st) st.textContent = 'Saved!';
+        await refreshInspector();
+      } else {
+        if (st) st.textContent = 'Error: ' + (res.result || 'failed');
+      }
     }
 
     function openFileModal() { document.getElementById('modalFile').classList.add('open'); }

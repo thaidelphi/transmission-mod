@@ -683,29 +683,100 @@ end;
 
 { 4. Edit Trackers Dialog (matching TrackersDialog.ui) }
 
+type
+  TEditTrackersForm = class(TForm)
+  public
+    Mem: TMemo;
+    procedure BtnConvertClick(Sender: TObject);
+  end;
+
+{ จัดรูปแบบรายการ Tracker ของทอร์เรนต์เป็นข้อความแบ่งบรรทัดและแบ่ง Tier ด้วยบรรทัดว่าง }
+function FormatTrackersAsText(Torrent: TTorrentItem): string;
+var
+  I, LastTier: Integer;
+  SL: TStringList;
+begin
+  Result := '';
+  if Torrent = nil then Exit;
+  SL := TStringList.Create;
+  try
+    LastTier := -1;
+    for I := 0 to High(Torrent.Trackers) do
+    begin
+      if (LastTier >= 0) and (Torrent.Trackers[I].Tier <> LastTier) then
+        SL.Add('');
+      SL.Add(Torrent.Trackers[I].Announce);
+      LastTier := Torrent.Trackers[I].Tier;
+    end;
+    Result := SL.Text;
+  finally
+    SL.Free;
+  end;
+end;
+
+{ แปลงโปรโตคอล Tracker URL ระหว่าง https:// (http://) กับ ht..tps:// (ht..tp://)
+  Mode: 0 = สลับอัตโนมัติ, 1 = แปลงเป็น ht..tps://, 2 = แปลงกลับเป็น https:// }
+function TransformTrackerUrls(const SourceText: string; Mode: Integer): string;
+var
+  LowerTxt: string;
+  ToDots: Boolean;
+begin
+  Result := SourceText;
+  if Result = '' then Exit;
+
+  if Mode = 1 then
+    ToDots := True
+  else if Mode = 2 then
+    ToDots := False
+  else
+  begin
+    LowerTxt := LowerCase(SourceText);
+    ToDots := (Pos('https://', LowerTxt) > 0) or (Pos('http://', LowerTxt) > 0);
+  end;
+
+  if ToDots then
+  begin
+    // แทนที่ https:// ก่อน http:// เพื่อไม่ให้ทับซ้อน
+    Result := StringReplace(Result, 'https://', 'ht..tps://', [rfReplaceAll, rfIgnoreCase]);
+    Result := StringReplace(Result, 'http://', 'ht..tp://', [rfReplaceAll, rfIgnoreCase]);
+  end
+  else
+  begin
+    Result := StringReplace(Result, 'ht..tps://', 'https://', [rfReplaceAll, rfIgnoreCase]);
+    Result := StringReplace(Result, 'ht..tp://', 'http://', [rfReplaceAll, rfIgnoreCase]);
+  end;
+end;
+
+procedure TEditTrackersForm.BtnConvertClick(Sender: TObject);
+begin
+  if Mem <> nil then
+    Mem.Lines.Text := TransformTrackerUrls(Mem.Lines.Text, TComponent(Sender).Tag);
+end;
+
 function ShowEditTrackersDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   Torrent: TTorrentItem): Boolean;
 var
-  F: TForm;
+  F: TEditTrackersForm;
   Gb: TGroupBox;
-  Lbl1, Lbl2: TLabel;
-  Mem: TMemo;
+  Lbl1, Lbl2, LblList: TLabel;
+  BtnToggle, BtnToDots, BtnToStd: TButton;
   BtnOK, BtnCancel: TButton;
-  I, LastTier: Integer;
   Args: TJSONObject;
 begin
   Result := False;
-  F := TForm.CreateNew(Owner);
+  F := TEditTrackersForm.CreateNew(Owner);
   try
     F.Caption := 'Edit Trackers - ' + Torrent.Name;
     F.Position := poOwnerFormCenter;
     F.BorderStyle := bsSizeable;
-    F.ClientWidth := 500;
-    F.ClientHeight := 380;
+    F.ClientWidth := 560;
+    F.ClientHeight := 410;
+    F.Constraints.MinWidth := 540;
+    F.Constraints.MinHeight := 340;
 
     Gb := TGroupBox.Create(F);
     Gb.Parent := F;
-    Gb.Left := 12; Gb.Top := 10; Gb.Width := 476; Gb.Height := 320;
+    Gb.Left := 12; Gb.Top := 10; Gb.Width := 536; Gb.Height := 350;
     Gb.Anchors := [akLeft, akTop, akRight, akBottom];
     Gb.Caption := 'Tracker Announce URLs';
 
@@ -716,27 +787,46 @@ begin
 
     Lbl2 := TLabel.Create(Gb);
     Lbl2.Parent := Gb;
-    Lbl2.Left := 12; Lbl2.Top := 30;
+    Lbl2.Left := 12; Lbl2.Top := 28;
     Lbl2.Caption := 'To add a new primary URL (new tier), add it after a blank line.';
 
-    Mem := TMemo.Create(Gb);
-    Mem.Parent := Gb;
-    Mem.Left := 12; Mem.Top := 54; Mem.Width := 450; Mem.Height := 230;
-    Mem.Anchors := [akLeft, akTop, akRight, akBottom];
-    Mem.ScrollBars := ssBoth;
+    LblList := TLabel.Create(Gb);
+    LblList.Parent := Gb;
+    LblList.Left := 12; LblList.Top := 54;
+    LblList.Font.Style := [fsBold];
+    LblList.Caption := 'Tracker List:';
 
-    LastTier := -1;
-    for I := 0 to High(Torrent.Trackers) do
-    begin
-      if (LastTier >= 0) and (Torrent.Trackers[I].Tier <> LastTier) then
-        Mem.Lines.Add('');
-      Mem.Lines.Add(Torrent.Trackers[I].Announce);
-      LastTier := Torrent.Trackers[I].Tier;
-    end;
+    BtnToggle := TButton.Create(Gb);
+    BtnToggle.Parent := Gb;
+    BtnToggle.Left := 102; BtnToggle.Top := 49; BtnToggle.Width := 180; BtnToggle.Height := 26;
+    BtnToggle.Caption := 'สลับ https:// <-> ht..tps://';
+    BtnToggle.Tag := 0;
+    BtnToggle.OnClick := @F.BtnConvertClick;
+
+    BtnToDots := TButton.Create(Gb);
+    BtnToDots.Parent := Gb;
+    BtnToDots.Left := 288; BtnToDots.Top := 49; BtnToDots.Width := 112; BtnToDots.Height := 26;
+    BtnToDots.Caption := 'เป็น ht..tps://';
+    BtnToDots.Tag := 1;
+    BtnToDots.OnClick := @F.BtnConvertClick;
+
+    BtnToStd := TButton.Create(Gb);
+    BtnToStd.Parent := Gb;
+    BtnToStd.Left := 406; BtnToStd.Top := 49; BtnToStd.Width := 118; BtnToStd.Height := 26;
+    BtnToStd.Caption := 'กลับเป็น https://';
+    BtnToStd.Tag := 2;
+    BtnToStd.OnClick := @F.BtnConvertClick;
+
+    F.Mem := TMemo.Create(Gb);
+    F.Mem.Parent := Gb;
+    F.Mem.Left := 12; F.Mem.Top := 82; F.Mem.Width := 512; F.Mem.Height := 232;
+    F.Mem.Anchors := [akLeft, akTop, akRight, akBottom];
+    F.Mem.ScrollBars := ssBoth;
+    F.Mem.Text := FormatTrackersAsText(Torrent);
 
     BtnOK := TButton.Create(F);
     BtnOK.Parent := F;
-    BtnOK.Left := 320; BtnOK.Top := 340; BtnOK.Width := 80;
+    BtnOK.Left := 380; BtnOK.Top := 370; BtnOK.Width := 80;
     BtnOK.Anchors := [akRight, akBottom];
     BtnOK.Caption := 'OK';
     BtnOK.Default := True;
@@ -744,7 +834,7 @@ begin
 
     BtnCancel := TButton.Create(F);
     BtnCancel.Parent := F;
-    BtnCancel.Left := 408; BtnCancel.Top := 340; BtnCancel.Width := 80;
+    BtnCancel.Left := 468; BtnCancel.Top := 370; BtnCancel.Width := 80;
     BtnCancel.Anchors := [akRight, akBottom];
     BtnCancel.Caption := 'Cancel';
     BtnCancel.Cancel := True;
@@ -753,7 +843,7 @@ begin
     if F.ShowModal = mrOk then
     begin
       Args := TJSONObject.Create;
-      Args.Add('trackerList', Mem.Lines.Text);
+      Args.Add('trackerList', F.Mem.Lines.Text);
       Result := Rpc.SetTorrentOptions(Torrent.Id, Args);
     end;
   finally
@@ -809,6 +899,7 @@ type
     procedure BtnEditTrackersClick(Sender: TObject);
     procedure BtnAddTrackerClick(Sender: TObject);
     procedure BtnRemoveTrackerClick(Sender: TObject);
+    procedure BtnToggleTrackerHttpsClick(Sender: TObject);
   end;
 
 function CreateKeyValLabel(ParentCtrl: TWinControl; Y: Integer; const KeyText, ValText: string): TLabel;
@@ -1145,6 +1236,26 @@ begin
     MessageDlg('Failed to remove tracker: ' + RpcRef.LastError, mtError, [mbOK], 0);
 end;
 
+procedure TDetailsForm.BtnToggleTrackerHttpsClick(Sender: TObject);
+var
+  OldText, NewText: string;
+  Args: TJSONObject;
+begin
+  if Length(TorRef.Trackers) = 0 then Exit;
+  OldText := FormatTrackersAsText(TorRef);
+  NewText := TransformTrackerUrls(OldText, 0);
+  if NewText = OldText then Exit;
+  Args := TJSONObject.Create;
+  Args.Add('trackerList', NewText);
+  if RpcRef.SetTorrentOptions(TorRef.Id, Args) then
+  begin
+    RpcRef.FetchTorrentDetails(TorRef);
+    UpdateDynamicViews;
+  end
+  else
+    MessageDlg('Failed to update trackers: ' + RpcRef.LastError, mtError, [mbOK], 0);
+end;
+
 procedure ShowDetailsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   Torrent: TTorrentItem);
 var
@@ -1153,7 +1264,7 @@ var
   TsAct, TsInfo, TsOpts: TTabSheet;
   BtnClose, BtnApplyOpt, BtnSaveFiles, BtnSelAll, BtnSelNone: TButton;
   BtnPriHigh, BtnPriNorm, BtnPriLow, BtnRename: TButton;
-  BtnEditTrk, BtnAddTrk, BtnRemTrk: TButton;
+  BtnEditTrk, BtnAddTrk, BtnRemTrk, BtnToggleTrk: TButton;
   Lbl: TLabel;
 begin
   if Torrent = nil then Exit;
@@ -1256,10 +1367,17 @@ begin
 
     BtnRemTrk := TButton.Create(F.TsTrackersTab);
     BtnRemTrk.Parent := F.TsTrackersTab;
-    BtnRemTrk.Left := 245; BtnRemTrk.Top := 346; BtnRemTrk.Width := 125;
+    BtnRemTrk.Left := 245; BtnRemTrk.Top := 346; BtnRemTrk.Width := 120;
     BtnRemTrk.Anchors := [akLeft, akBottom];
     BtnRemTrk.Caption := 'Remove Tracker';
     BtnRemTrk.OnClick := @F.BtnRemoveTrackerClick;
+
+    BtnToggleTrk := TButton.Create(F.TsTrackersTab);
+    BtnToggleTrk.Parent := F.TsTrackersTab;
+    BtnToggleTrk.Left := 371; BtnToggleTrk.Top := 346; BtnToggleTrk.Width := 190;
+    BtnToggleTrk.Anchors := [akLeft, akBottom];
+    BtnToggleTrk.Caption := 'สลับ https:// <-> ht..tps://';
+    BtnToggleTrk.OnClick := @F.BtnToggleTrackerHttpsClick;
 
     // Tab 5: Files
     F.TsFilesTab := PC.AddTabSheet;

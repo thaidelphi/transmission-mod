@@ -180,8 +180,10 @@ namespace
 
 constexpr std::optional<uint16_t> getPortForScheme(std::string_view scheme)
 {
-    auto constexpr KnownSchemes = std::array<std::pair<std::string_view, uint16_t>, 5>{ {
+    auto constexpr KnownSchemes = std::array<std::pair<std::string_view, uint16_t>, 7>{ {
         { "ftp"sv, 21U },
+        { "ht..tp"sv, 80U },
+        { "ht..tps"sv, 443U },
         { "http"sv, 80U },
         { "https"sv, 443U },
         { "sftp"sv, 22U },
@@ -217,7 +219,7 @@ constexpr bool urlCharsAreValid(std::string_view url)
 
 bool tr_isValidTrackerScheme(std::string_view scheme)
 {
-    auto constexpr Schemes = std::array<std::string_view, 3>{ "http"sv, "https"sv, "udp"sv };
+    auto constexpr Schemes = std::array<std::string_view, 5>{ "http"sv, "https"sv, "udp"sv, "ht..tp"sv, "ht..tps"sv };
     return std::ranges::find(Schemes, scheme) != std::ranges::end(Schemes);
 }
 
