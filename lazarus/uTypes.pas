@@ -191,6 +191,14 @@ type
     TrackerPaused: Boolean;             // ปิดการส่ง Packet ไปหา Tracker ทั้งโปรแกรมหรือไม่
   end;
 
+  { การตั้งค่าพฤติกรรมฝั่งเดสก์ท็อป (บันทึกลง INI คล้ายตัวเลือกของ BitComet) }
+  TDesktopPrefs = record
+    MinimizeToTray: Boolean;         // เมื่อกดปุ่ม X ให้ย่อไปไว้มุมขวาล่างแทนปิดโปรแกรม
+    PreventSleepWhenActive: Boolean; // ป้องกัน Windows เข้าโหมดหลับขณะกำลังดาวน์โหลด/ปล่อยไฟล์
+    PlaySoundOnFinish: Boolean;      // เล่นเสียงแจ้งเตือนเมื่อดาวน์โหลดเสร็จ
+    ShowNotifyOnFinish: Boolean;     // แสดงแถบแจ้งเตือนมุมขวาล่างเมื่อดาวน์โหลดเสร็จ
+  end;
+
   { โครงสร้างเก็บข้อมูลสถิติของโปรแกรม (ตรงกับผลลัพธ์ของคำสั่ง RPC `session-stats`) }
   TSessionStatsData = record
     ActiveTorrentCount: Integer;    // จำนวนทอร์เรนต์ที่กำลังทำงานอยู่
@@ -221,6 +229,8 @@ function ExtractTrackerHost(const AnnounceUrl: string): string;
 function HasCliFlag(const Flag: string): Boolean;
 function GetWindowsAutoStart(out StartMinimized: Boolean): Boolean;
 function SetWindowsAutoStart(Enabled, StartMinimized: Boolean): Boolean;
+procedure SetPreventSystemSleep(Active: Boolean);
+procedure PlayCompletionSound;
 
 implementation
 
@@ -588,5 +598,33 @@ begin
   Result := False;
 end;
 {$ENDIF}
+
+{$IFDEF WINDOWS}
+function WinSetThreadExecutionState(esFlags: DWORD): DWORD; stdcall;
+  external 'kernel32.dll' name 'SetThreadExecutionState';
+{$ENDIF}
+
+procedure SetPreventSystemSleep(Active: Boolean);
+{$IFDEF WINDOWS}
+const
+  ES_CONTINUOUS      = DWORD($80000000);
+  ES_SYSTEM_REQUIRED = DWORD($00000001);
+begin
+  if Active then
+    WinSetThreadExecutionState(ES_CONTINUOUS or ES_SYSTEM_REQUIRED)
+  else
+    WinSetThreadExecutionState(ES_CONTINUOUS);
+end;
+{$ELSE}
+begin
+end;
+{$ENDIF}
+
+procedure PlayCompletionSound;
+begin
+{$IFDEF WINDOWS}
+  MessageBeep(MB_ICONASTERISK);
+{$ENDIF}
+end;
 
 end.

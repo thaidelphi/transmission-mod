@@ -34,8 +34,8 @@ unit uDialogs;
 interface
 
 uses
-  Classes, SysUtils, Types, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
-  ComCtrls, Spin, Clipbrd, LCLIntf, fpjson, DateUtils, uTypes, uBencode, uRpcClient, uWebServer;
+  Classes, SysUtils, Types, Math, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
+  ComCtrls, Spin, Clipbrd, LCLType, LCLIntf, fpjson, DateUtils, uTypes, uBencode, uRpcClient, uWebServer;
 
 type
   { TDetailsPanel: พาเนลแสดงและแก้ไขคุณสมบัติทอร์เรนต์ 6 แท็บ ใช้ร่วมกันได้ทั้งในหน้าต่างหลักด้านล่างและ Modal Dialog }
@@ -138,7 +138,7 @@ procedure ShowDetailsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
 
 function ShowPrefsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   WebSrv: TTransmissionWebServer; var Config: TSessionConfig;
-  var MinimizeToTray: Boolean): Boolean;
+  var DesktopPrefs: TDesktopPrefs; OnApplyCallback: TNotifyEvent = nil): Boolean;
 
 function ShowSessionDialog(Owner: TComponent; Rpc: TTransmissionRpcClient): Boolean;
 
@@ -1948,64 +1948,144 @@ end;
 { 7. Preferences Dialog }
 
 type
+  { หน้าต่าง Options / Preferences สไตล์ BitComet (แถบหมวดหมู่ซ้าย + หัวข้อแถบน้ำเงิน + GroupBox ขวา + OK / Cancel / Apply) }
   TPrefsForm = class(TForm)
   public
     RpcRef: TTransmissionRpcClient;
     WebSrvRef: TTransmissionWebServer;
+    ConfigPtr: ^TSessionConfig;
+    DesktopPtr: ^TDesktopPrefs;
+    OnApplyCb: TNotifyEvent;
+    AppliedOnce: Boolean;
+
+    LstCategories: TListBox;
+    PnlBanner: TPanel;
+    LblBanner: TLabel;
+    Pages: array[0..7] of TPanel;
+
+    // 0: Connection
     ChkUpLimit: TCheckBox;
     SpnUpLimit: TSpinEdit;
     ChkDownLimit: TCheckBox;
     SpnDownLimit: TSpinEdit;
+    ChkAltEnabled: TCheckBox;
     SpnAltUp: TSpinEdit;
     SpnAltDown: TSpinEdit;
-    ChkAltEnabled: TCheckBox;
-
-    EdtDownloadDir: TEdit;
-    ChkStartAdded: TCheckBox;
-    ChkRenamePartial: TCheckBox;
-    ChkIncompleteDir: TCheckBox;
-    EdtIncompleteDir: TEdit;
-    ChkQueueDown: TCheckBox;
-    SpnQueueDown: TSpinEdit;
-
-    ChkRatioLimit: TCheckBox;
-    EdtRatioLimit: TEdit;
-    ChkIdleLimit: TCheckBox;
-    SpnIdleLimit: TSpinEdit;
-
-    CmbEncryption: TComboBox;
-    ChkPex: TCheckBox;
-    ChkDht: TCheckBox;
-    ChkLpd: TCheckBox;
-    ChkBlocklist: TCheckBox;
-    EdtBlocklistUrl: TEdit;
-    LblBlocklistRules: TLabel;
-
     SpnPeerPort: TSpinEdit;
     LblPortStatus: TLabel;
     ChkRandomPort: TCheckBox;
     ChkPortForwarding: TCheckBox;
     ChkUtp: TCheckBox;
+
+    // 1: Directories
+    EdtDownloadDir: TEdit;
+    ChkIncompleteDir: TCheckBox;
+    EdtIncompleteDir: TEdit;
+    ChkRenamePartial: TCheckBox;
+
+    // 2: Tasks (เหมือนภาพตัวอย่าง BitComet)
+    ChkStartAdded: TCheckBox;
+    ChkTrashTorrent: TCheckBox;
+    ChkRenamePartialTask: TCheckBox;
+    ChkPreventSleep: TCheckBox;
+    ChkFinishSound: TCheckBox;
+    ChkFinishNotify: TCheckBox;
+    ChkQueueDown: TCheckBox;
+    SpnQueueDown: TSpinEdit;
+    ChkQueueSeed: TCheckBox;
+    SpnQueueSeed: TSpinEdit;
+
+    // 3: BitTorrent
+    CmbEncryption: TComboBox;
+    ChkPex: TCheckBox;
+    ChkDht: TCheckBox;
+    ChkLpd: TCheckBox;
     SpnPeerGlobal: TSpinEdit;
     SpnPeerPerTorrent: TSpinEdit;
+    ChkBlockTrackers: TCheckBox;
 
+    // 4: Seeding Rules
+    ChkRatioLimit: TCheckBox;
+    EdtRatioLimit: TEdit;
+    ChkIdleLimit: TCheckBox;
+    SpnIdleLimit: TSpinEdit;
+
+    // 5: IP Filter / Blocklist
+    ChkBlocklist: TCheckBox;
+    EdtBlocklistUrl: TEdit;
+    LblBlocklistRules: TLabel;
+
+    // 6: Remote / Web UI
     ChkWebEnabled: TCheckBox;
     SpnWebPort: TSpinEdit;
     ChkWebAuth: TCheckBox;
     EdtWebUser: TEdit;
     EdtWebPass: TEdit;
 
-    RbCloseExit: TRadioButton;
-    RbCloseTray: TRadioButton;
+    // 7: Appearance & Startup
     ChkAutoStart: TCheckBox;
     ChkStartMinimized: TCheckBox;
+    RbCloseExit: TRadioButton;
+    RbCloseTray: TRadioButton;
 
+    procedure LstCategoriesClick(Sender: TObject);
+    procedure LstCategoriesDrawItem(Control: TWinControl; Index: Integer;
+      ARect: TRect; State: TOwnerDrawState);
+    procedure SwitchCategory(Idx: Integer);
     procedure BtnBrowseSaveDirClick(Sender: TObject);
+    procedure BtnBrowseIncDirClick(Sender: TObject);
     procedure BtnTestPortClick(Sender: TObject);
     procedure BtnUpdateBlocklistClick(Sender: TObject);
     procedure BtnOpenWebClientClick(Sender: TObject);
     procedure ChkAutoStartChange(Sender: TObject);
+    procedure SyncPartialCheck(Sender: TObject);
+    procedure ApplySettings;
+    procedure BtnApplyClick(Sender: TObject);
   end;
+
+procedure TPrefsForm.SwitchCategory(Idx: Integer);
+var
+  I: Integer;
+begin
+  if (Idx < 0) or (Idx > High(Pages)) then Exit;
+  for I := 0 to High(Pages) do
+    if Pages[I] <> nil then
+      Pages[I].Visible := (I = Idx);
+  if (LstCategories <> nil) and (Idx < LstCategories.Items.Count) then
+    LblBanner.Caption := '  ' + LstCategories.Items[Idx];
+end;
+
+procedure TPrefsForm.LstCategoriesClick(Sender: TObject);
+begin
+  if LstCategories.ItemIndex >= 0 then
+    SwitchCategory(LstCategories.ItemIndex);
+end;
+
+procedure TPrefsForm.LstCategoriesDrawItem(Control: TWinControl; Index: Integer;
+  ARect: TRect; State: TOwnerDrawState);
+var
+  C: TCanvas;
+  TextStr: string;
+  IsSel: Boolean;
+begin
+  C := LstCategories.Canvas;
+  IsSel := odSelected in State;
+  if IsSel then
+  begin
+    C.Brush.Color := RGBToColor(14, 98, 196);
+    C.Font.Color := clWhite;
+    C.Font.Style := [fsBold];
+  end
+  else
+  begin
+    C.Brush.Color := clWindow;
+    C.Font.Color := clWindowText;
+    C.Font.Style := [];
+  end;
+  C.FillRect(ARect);
+  TextStr := LstCategories.Items[Index];
+  C.TextOut(ARect.Left + 12, ARect.Top + ((ARect.Bottom - ARect.Top - C.TextHeight('Hg')) div 2), TextStr);
+end;
 
 procedure TPrefsForm.BtnBrowseSaveDirClick(Sender: TObject);
 var
@@ -2014,6 +2094,15 @@ begin
   Dir := EdtDownloadDir.Text;
   if SelectDirectory('Select Default Save Folder', '', Dir) then
     EdtDownloadDir.Text := Dir;
+end;
+
+procedure TPrefsForm.BtnBrowseIncDirClick(Sender: TObject);
+var
+  Dir: string;
+begin
+  Dir := EdtIncompleteDir.Text;
+  if SelectDirectory('Select Incomplete Folder', '', Dir) then
+    EdtIncompleteDir.Text := Dir;
 end;
 
 procedure TPrefsForm.BtnTestPortClick(Sender: TObject);
@@ -2056,17 +2145,149 @@ begin
     ChkStartMinimized.Enabled := ChkAutoStart.Checked;
 end;
 
+procedure TPrefsForm.SyncPartialCheck(Sender: TObject);
+begin
+  if Sender = ChkRenamePartial then
+  begin
+    if ChkRenamePartialTask <> nil then
+      ChkRenamePartialTask.Checked := ChkRenamePartial.Checked;
+  end
+  else if Sender = ChkRenamePartialTask then
+  begin
+    if ChkRenamePartial <> nil then
+      ChkRenamePartial.Checked := ChkRenamePartialTask.Checked;
+  end;
+end;
+
+procedure TPrefsForm.ApplySettings;
+var
+  Args: TJSONObject;
+begin
+  DesktopPtr^.MinimizeToTray := RbCloseTray.Checked;
+  DesktopPtr^.PreventSleepWhenActive := ChkPreventSleep.Checked;
+  DesktopPtr^.PlaySoundOnFinish := ChkFinishSound.Checked;
+  DesktopPtr^.ShowNotifyOnFinish := ChkFinishNotify.Checked;
+  SetWindowsAutoStart(ChkAutoStart.Checked, ChkStartMinimized.Checked);
+
+  Args := TJSONObject.Create;
+  Args.Add('speed-limit-up-enabled', ChkUpLimit.Checked);
+  Args.Add('speed-limit-up', SpnUpLimit.Value);
+  Args.Add('speed-limit-down-enabled', ChkDownLimit.Checked);
+  Args.Add('speed-limit-down', SpnDownLimit.Value);
+  Args.Add('alt-speed-enabled', ChkAltEnabled.Checked);
+  Args.Add('alt-speed-up', SpnAltUp.Value);
+  Args.Add('alt-speed-down', SpnAltDown.Value);
+  Args.Add('download-dir', StringReplace(EdtDownloadDir.Text, '\', '/', [rfReplaceAll]));
+  Args.Add('start-added-torrents', ChkStartAdded.Checked);
+  Args.Add('trash-original-torrent-files', ChkTrashTorrent.Checked);
+  Args.Add('rename-partial-files', ChkRenamePartialTask.Checked);
+  Args.Add('incomplete-dir-enabled', ChkIncompleteDir.Checked);
+  Args.Add('incomplete-dir', StringReplace(EdtIncompleteDir.Text, '\', '/', [rfReplaceAll]));
+  Args.Add('download-queue-enabled', ChkQueueDown.Checked);
+  Args.Add('download-queue-size', SpnQueueDown.Value);
+  Args.Add('seed-queue-enabled', ChkQueueSeed.Checked);
+  Args.Add('seed-queue-size', SpnQueueSeed.Value);
+  Args.Add('seedRatioLimited', ChkRatioLimit.Checked);
+  Args.Add('seedRatioLimit', StrToFloatDef(EdtRatioLimit.Text, 2.0));
+  Args.Add('idle-seeding-limit-enabled', ChkIdleLimit.Checked);
+  Args.Add('idle-seeding-limit', SpnIdleLimit.Value);
+  case CmbEncryption.ItemIndex of
+    0: Args.Add('encryption', 'tolerated');
+    2: Args.Add('encryption', 'required');
+  else
+    Args.Add('encryption', 'preferred');
+  end;
+  Args.Add('pex-enabled', ChkPex.Checked);
+  Args.Add('dht-enabled', ChkDht.Checked);
+  Args.Add('lpd-enabled', ChkLpd.Checked);
+  Args.Add('blocklist-enabled', ChkBlocklist.Checked);
+  Args.Add('blocklist-url', EdtBlocklistUrl.Text);
+  Args.Add('peer-port', SpnPeerPort.Value);
+  Args.Add('peer-port-random-on-start', ChkRandomPort.Checked);
+  Args.Add('port-forwarding-enabled', ChkPortForwarding.Checked);
+  Args.Add('utp-enabled', ChkUtp.Checked);
+  Args.Add('peer-limit-per-torrent', SpnPeerPerTorrent.Value);
+  Args.Add('peer-limit-global', SpnPeerGlobal.Value);
+  Args.Add('tracker_paused', ChkBlockTrackers.Checked);
+
+  RpcRef.UpdateSession(Args);
+  RpcRef.FetchSession(ConfigPtr^);
+
+  if WebSrvRef <> nil then
+  begin
+    WebSrvRef.Enabled := ChkWebEnabled.Checked;
+    WebSrvRef.Port := SpnWebPort.Value;
+    WebSrvRef.AuthEnabled := ChkWebAuth.Checked;
+    WebSrvRef.Username := Trim(EdtWebUser.Text);
+    WebSrvRef.Password := EdtWebPass.Text;
+    WebSrvRef.RestartServer;
+  end;
+
+  AppliedOnce := True;
+  if Assigned(OnApplyCb) then
+    OnApplyCb(Self);
+end;
+
+procedure TPrefsForm.BtnApplyClick(Sender: TObject);
+begin
+  ApplySettings;
+end;
+
 function ShowPrefsDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
   WebSrv: TTransmissionWebServer; var Config: TSessionConfig;
-  var MinimizeToTray: Boolean): Boolean;
+  var DesktopPrefs: TDesktopPrefs; OnApplyCallback: TNotifyEvent = nil): Boolean;
 var
   F: TPrefsForm;
-  PC: TPageControl;
-  TsSpeed, TsDown, TsSeed, TsPriv, TsNet, TsRemote, TsDesktop: TTabSheet;
+  PnlNav, PnlRight, PnlPageHost: TPanel;
+  DivLine: TBevel;
+  Gb1, Gb2, Gb3: TGroupBox;
   Lbl: TLabel;
-  BtnBrowse, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel: TButton;
-  Args: TJSONObject;
+  BtnBrowse, BtnBrowseInc, BtnTestPort, BtnUpdBlk, BtnOpenWeb, BtnOK, BtnCancel, BtnApply: TButton;
   AutoStartOn, AutoStartMin: Boolean;
+  I: Integer;
+
+  function MakeGroup(ParentPage: TWinControl; ATop, AHeight: Integer; const ACaption: string): TGroupBox;
+  begin
+    Result := TGroupBox.Create(ParentPage);
+    Result.Parent := ParentPage;
+    Result.Left := 8;
+    Result.Top := ATop;
+    Result.Width := 534;
+    Result.Height := AHeight;
+    Result.Caption := ACaption;
+  end;
+
+  function MakeCheck(ParentGrp: TWinControl; ALeft, ATop: Integer; const ACaption: string; AChecked: Boolean): TCheckBox;
+  begin
+    Result := TCheckBox.Create(ParentGrp);
+    Result.Parent := ParentGrp;
+    Result.Left := ALeft;
+    Result.Top := ATop;
+    Result.Caption := ACaption;
+    Result.Checked := AChecked;
+  end;
+
+  function MakeLabel(ParentCtrl: TWinControl; ALeft, ATop: Integer; const ACaption: string): TLabel;
+  begin
+    Result := TLabel.Create(ParentCtrl);
+    Result.Parent := ParentCtrl;
+    Result.Left := ALeft;
+    Result.Top := ATop;
+    Result.Caption := ACaption;
+  end;
+
+  function MakeSpin(ParentCtrl: TWinControl; ALeft, ATop, AWidth, AMin, AMax, AVal: Integer): TSpinEdit;
+  begin
+    Result := TSpinEdit.Create(ParentCtrl);
+    Result.Parent := ParentCtrl;
+    Result.Left := ALeft;
+    Result.Top := ATop;
+    Result.Width := AWidth;
+    Result.MinValue := AMin;
+    Result.MaxValue := AMax;
+    Result.Value := EnsureRange(AVal, AMin, AMax);
+  end;
+
 begin
   Result := False;
   Rpc.FetchSession(Config);
@@ -2075,492 +2296,293 @@ begin
   try
     F.RpcRef := Rpc;
     F.WebSrvRef := WebSrv;
+    F.ConfigPtr := @Config;
+    F.DesktopPtr := @DesktopPrefs;
+    F.OnApplyCb := OnApplyCallback;
+    F.AppliedOnce := False;
     F.Caption := 'Transmission Preferences';
     F.Position := poMainFormCenter;
     F.BorderStyle := bsDialog;
-    F.ClientWidth := 540;
-    F.ClientHeight := 370;
+    F.ClientWidth := 760;
+    F.ClientHeight := 520;
 
-    PC := TPageControl.Create(F);
-    PC.Parent := F;
-    PC.Left := 8; PC.Top := 8; PC.Width := 524; PC.Height := 312;
+    // 1. แถบรายการหมวดหมู่ด้านซ้าย (สไตล์ BitComet)
+    PnlNav := TPanel.Create(F);
+    PnlNav.Parent := F;
+    PnlNav.Left := 8; PnlNav.Top := 8; PnlNav.Width := 184; PnlNav.Height := 456;
+    PnlNav.BevelOuter := bvLowered;
 
-    // 1. Speed Tab
-    TsSpeed := PC.AddTabSheet;
-    TsSpeed.Caption := 'Speed';
+    F.LstCategories := TListBox.Create(PnlNav);
+    F.LstCategories.Parent := PnlNav;
+    F.LstCategories.Align := alClient;
+    F.LstCategories.BorderStyle := bsNone;
+    F.LstCategories.Style := lbOwnerDrawFixed;
+    F.LstCategories.ItemHeight := 28;
+    F.LstCategories.OnDrawItem := @F.LstCategoriesDrawItem;
+    F.LstCategories.OnClick := @F.LstCategoriesClick;
+    F.LstCategories.Items.Add('Connection');
+    F.LstCategories.Items.Add('Directories');
+    F.LstCategories.Items.Add('Tasks');
+    F.LstCategories.Items.Add('BitTorrent');
+    F.LstCategories.Items.Add('Seeding Rules');
+    F.LstCategories.Items.Add('IP Filter / Blocklist');
+    F.LstCategories.Items.Add('Remote / Web UI');
+    F.LstCategories.Items.Add('Appearance & Startup');
 
-    Lbl := TLabel.Create(TsSpeed);
-    Lbl.Parent := TsSpeed;
-    Lbl.Left := 16; Lbl.Top := 16;
-    Lbl.Font.Style := [fsBold];
-    Lbl.Caption := 'Speed Limits';
+    // 2. พื้นที่เนื้อหาด้านขวา + แถบหัวข้อสีน้ำเงินด้านบน (สไตล์ BitComet)
+    PnlRight := TPanel.Create(F);
+    PnlRight.Parent := F;
+    PnlRight.Left := 200; PnlRight.Top := 8; PnlRight.Width := 552; PnlRight.Height := 456;
+    PnlRight.BevelOuter := bvNone;
 
-    F.ChkUpLimit := TCheckBox.Create(TsSpeed);
-    F.ChkUpLimit.Parent := TsSpeed;
-    F.ChkUpLimit.Left := 24; F.ChkUpLimit.Top := 44;
-    F.ChkUpLimit.Caption := 'Upload (KB/s):';
-    F.ChkUpLimit.Checked := Config.SpeedLimitUpEnabled;
+    F.PnlBanner := TPanel.Create(PnlRight);
+    F.PnlBanner.Parent := PnlRight;
+    F.PnlBanner.Align := alTop;
+    F.PnlBanner.Height := 30;
+    F.PnlBanner.BevelOuter := bvNone;
+    F.PnlBanner.Color := RGBToColor(14, 98, 196);
 
-    F.SpnUpLimit := TSpinEdit.Create(TsSpeed);
-    F.SpnUpLimit.Parent := TsSpeed;
-    F.SpnUpLimit.Left := 180; F.SpnUpLimit.Top := 40; F.SpnUpLimit.Width := 100;
-    F.SpnUpLimit.MaxValue := 1000000;
-    F.SpnUpLimit.Value := Config.SpeedLimitUp;
+    F.LblBanner := TLabel.Create(F.PnlBanner);
+    F.LblBanner.Parent := F.PnlBanner;
+    F.LblBanner.Left := 6; F.LblBanner.Top := 4;
+    F.LblBanner.Font.Color := clWhite;
+    F.LblBanner.Font.Size := 12;
+    F.LblBanner.Font.Style := [fsBold];
+    F.LblBanner.Caption := '  Connection';
 
-    F.ChkDownLimit := TCheckBox.Create(TsSpeed);
-    F.ChkDownLimit.Parent := TsSpeed;
-    F.ChkDownLimit.Left := 24; F.ChkDownLimit.Top := 78;
-    F.ChkDownLimit.Caption := 'Download (KB/s):';
-    F.ChkDownLimit.Checked := Config.SpeedLimitDownEnabled;
+    PnlPageHost := TPanel.Create(PnlRight);
+    PnlPageHost.Parent := PnlRight;
+    PnlPageHost.Align := alClient;
+    PnlPageHost.BevelOuter := bvNone;
 
-    F.SpnDownLimit := TSpinEdit.Create(TsSpeed);
-    F.SpnDownLimit.Parent := TsSpeed;
-    F.SpnDownLimit.Left := 180; F.SpnDownLimit.Top := 74; F.SpnDownLimit.Width := 100;
-    F.SpnDownLimit.MaxValue := 1000000;
-    F.SpnDownLimit.Value := Config.SpeedLimitDown;
+    for I := 0 to High(F.Pages) do
+    begin
+      F.Pages[I] := TPanel.Create(PnlPageHost);
+      F.Pages[I].Parent := PnlPageHost;
+      F.Pages[I].Align := alClient;
+      F.Pages[I].BevelOuter := bvNone;
+      F.Pages[I].Visible := False;
+    end;
 
-    Lbl := TLabel.Create(TsSpeed);
-    Lbl.Parent := TsSpeed;
-    Lbl.Left := 16; Lbl.Top := 124;
-    Lbl.Font.Style := [fsBold];
-    Lbl.Caption := 'Alternative Speed Limits (Turtle Mode)';
+    // --- Page 0: Connection ---
+    Gb1 := MakeGroup(F.Pages[0], 8, 175, 'Bandwidth & Turtle Mode');
+    F.ChkUpLimit := MakeCheck(Gb1, 14, 24, 'Global max upload speed (KB/s):', Config.SpeedLimitUpEnabled);
+    F.SpnUpLimit := MakeSpin(Gb1, 290, 20, 95, 0, 1000000, Config.SpeedLimitUp);
+    F.ChkDownLimit := MakeCheck(Gb1, 14, 54, 'Global max download speed (KB/s):', Config.SpeedLimitDownEnabled);
+    F.SpnDownLimit := MakeSpin(Gb1, 290, 50, 95, 0, 1000000, Config.SpeedLimitDown);
+    F.ChkAltEnabled := MakeCheck(Gb1, 14, 88, 'Enable Alternative Speed Limits (Turtle Mode) now', Config.AltSpeedEnabled);
+    MakeLabel(Gb1, 34, 118, 'Alt upload limit (KB/s):');
+    F.SpnAltUp := MakeSpin(Gb1, 290, 114, 95, 0, 1000000, Config.AltSpeedUp);
+    MakeLabel(Gb1, 34, 144, 'Alt download limit (KB/s):');
+    F.SpnAltDown := MakeSpin(Gb1, 290, 140, 95, 0, 1000000, Config.AltSpeedDown);
 
-    F.ChkAltEnabled := TCheckBox.Create(TsSpeed);
-    F.ChkAltEnabled.Parent := TsSpeed;
-    F.ChkAltEnabled.Left := 24; F.ChkAltEnabled.Top := 150;
-    F.ChkAltEnabled.Caption := 'Enable Alternative Speed Limits now';
-    F.ChkAltEnabled.Checked := Config.AltSpeedEnabled;
+    Gb2 := MakeGroup(F.Pages[0], 192, 170, 'Listen Port & Router Mapping');
+    MakeLabel(Gb2, 14, 26, 'BitTorrent listening port:');
+    F.SpnPeerPort := MakeSpin(Gb2, 190, 22, 88, 1, 65535, Config.PeerPort);
+    BtnTestPort := TButton.Create(Gb2);
+    BtnTestPort.Parent := Gb2;
+    BtnTestPort.Left := 290; BtnTestPort.Top := 20; BtnTestPort.Width := 95; BtnTestPort.Height := 25;
+    BtnTestPort.Caption := 'Test Port';
+    BtnTestPort.OnClick := @F.BtnTestPortClick;
+    F.LblPortStatus := MakeLabel(Gb2, 396, 26, '');
+    F.LblPortStatus.Font.Style := [fsBold];
+    F.ChkRandomPort := MakeCheck(Gb2, 14, 60, 'Pick a random listening port on startup', Config.PeerPortRandomOnStart);
+    F.ChkPortForwarding := MakeCheck(Gb2, 14, 88, 'Enable UPnP / NAT-PMP port forwarding', Config.PortForwardingEnabled);
+    F.ChkUtp := MakeCheck(Gb2, 14, 116, 'Enable µTP (Micro Transport Protocol)', Config.UtpEnabled);
 
-    Lbl := TLabel.Create(TsSpeed);
-    Lbl.Parent := TsSpeed;
-    Lbl.Left := 24; Lbl.Top := 184;
-    Lbl.Caption := 'Alt Upload (KB/s):';
-
-    F.SpnAltUp := TSpinEdit.Create(TsSpeed);
-    F.SpnAltUp.Parent := TsSpeed;
-    F.SpnAltUp.Left := 180; F.SpnAltUp.Top := 180; F.SpnAltUp.Width := 100;
-    F.SpnAltUp.MaxValue := 1000000;
-    F.SpnAltUp.Value := Config.AltSpeedUp;
-
-    Lbl := TLabel.Create(TsSpeed);
-    Lbl.Parent := TsSpeed;
-    Lbl.Left := 24; Lbl.Top := 218;
-    Lbl.Caption := 'Alt Download (KB/s):';
-
-    F.SpnAltDown := TSpinEdit.Create(TsSpeed);
-    F.SpnAltDown.Parent := TsSpeed;
-    F.SpnAltDown.Left := 180; F.SpnAltDown.Top := 214; F.SpnAltDown.Width := 100;
-    F.SpnAltDown.MaxValue := 1000000;
-    F.SpnAltDown.Value := Config.AltSpeedDown;
-
-    // 2. Downloading Tab
-    TsDown := PC.AddTabSheet;
-    TsDown.Caption := 'Downloading';
-
-    Lbl := TLabel.Create(TsDown);
-    Lbl.Parent := TsDown;
-    Lbl.Left := 16; Lbl.Top := 16;
-    Lbl.Caption := 'Save to Location:';
-
-    F.EdtDownloadDir := TEdit.Create(TsDown);
-    F.EdtDownloadDir.Parent := TsDown;
-    F.EdtDownloadDir.Left := 16; F.EdtDownloadDir.Top := 36; F.EdtDownloadDir.Width := 355;
+    // --- Page 1: Directories ---
+    Gb1 := MakeGroup(F.Pages[1], 8, 110, 'Default Download Directory');
+    MakeLabel(Gb1, 14, 24, 'Save downloaded files to:');
+    F.EdtDownloadDir := TEdit.Create(Gb1);
+    F.EdtDownloadDir.Parent := Gb1;
+    F.EdtDownloadDir.Left := 14; F.EdtDownloadDir.Top := 46; F.EdtDownloadDir.Width := 412;
     F.EdtDownloadDir.Text := Config.DownloadDir;
-
-    BtnBrowse := TButton.Create(TsDown);
-    BtnBrowse.Parent := TsDown;
-    BtnBrowse.Left := 380; BtnBrowse.Top := 34; BtnBrowse.Width := 80;
+    BtnBrowse := TButton.Create(Gb1);
+    BtnBrowse.Parent := Gb1;
+    BtnBrowse.Left := 434; BtnBrowse.Top := 44; BtnBrowse.Width := 86; BtnBrowse.Height := 25;
     BtnBrowse.Caption := 'Browse...';
     BtnBrowse.OnClick := @F.BtnBrowseSaveDirClick;
 
-    F.ChkStartAdded := TCheckBox.Create(TsDown);
-    F.ChkStartAdded.Parent := TsDown;
-    F.ChkStartAdded.Left := 16; F.ChkStartAdded.Top := 72;
-    F.ChkStartAdded.Caption := 'Start added torrents immediately';
-    F.ChkStartAdded.Checked := Config.StartAddedTorrents;
-
-    F.ChkRenamePartial := TCheckBox.Create(TsDown);
-    F.ChkRenamePartial.Parent := TsDown;
-    F.ChkRenamePartial.Left := 16; F.ChkRenamePartial.Top := 100;
-    F.ChkRenamePartial.Caption := 'Append ".part" to incomplete files'' names';
-    F.ChkRenamePartial.Checked := Config.RenamePartialFiles;
-
-    F.ChkIncompleteDir := TCheckBox.Create(TsDown);
-    F.ChkIncompleteDir.Parent := TsDown;
-    F.ChkIncompleteDir.Left := 16; F.ChkIncompleteDir.Top := 130;
-    F.ChkIncompleteDir.Caption := 'Keep incomplete torrents in:';
-    F.ChkIncompleteDir.Checked := Config.IncompleteDirEnabled;
-
-    F.EdtIncompleteDir := TEdit.Create(TsDown);
-    F.EdtIncompleteDir.Parent := TsDown;
-    F.EdtIncompleteDir.Left := 16; F.EdtIncompleteDir.Top := 154; F.EdtIncompleteDir.Width := 444;
+    Gb2 := MakeGroup(F.Pages[1], 128, 150, 'Temporary / Incomplete Files');
+    F.ChkIncompleteDir := MakeCheck(Gb2, 14, 24, 'Store incomplete downloads in temporary folder:', Config.IncompleteDirEnabled);
+    F.EdtIncompleteDir := TEdit.Create(Gb2);
+    F.EdtIncompleteDir.Parent := Gb2;
+    F.EdtIncompleteDir.Left := 14; F.EdtIncompleteDir.Top := 52; F.EdtIncompleteDir.Width := 412;
     F.EdtIncompleteDir.Text := Config.IncompleteDir;
+    BtnBrowseInc := TButton.Create(Gb2);
+    BtnBrowseInc.Parent := Gb2;
+    BtnBrowseInc.Left := 434; BtnBrowseInc.Top := 50; BtnBrowseInc.Width := 86; BtnBrowseInc.Height := 25;
+    BtnBrowseInc.Caption := 'Browse...';
+    BtnBrowseInc.OnClick := @F.BtnBrowseIncDirClick;
+    F.ChkRenamePartial := MakeCheck(Gb2, 14, 92, 'Append ".part" file extension to unfinished files', Config.RenamePartialFiles);
+    F.ChkRenamePartial.OnChange := @F.SyncPartialCheck;
 
-    F.ChkQueueDown := TCheckBox.Create(TsDown);
-    F.ChkQueueDown.Parent := TsDown;
-    F.ChkQueueDown.Left := 16; F.ChkQueueDown.Top := 196;
-    F.ChkQueueDown.Caption := 'Maximum active downloads:';
-    F.ChkQueueDown.Checked := Config.DownloadQueueEnabled;
+    // --- Page 2: Tasks (คล้ายหน้า Tasks ของ BitComet) ---
+    Gb1 := MakeGroup(F.Pages[2], 8, 140, 'Download');
+    F.ChkStartAdded := MakeCheck(Gb1, 14, 24, 'Auto-start added tasks immediately', Config.StartAddedTorrents);
+    F.ChkRenamePartialTask := MakeCheck(Gb1, 14, 50, 'Add ".part" file extension to unfinished files', Config.RenamePartialFiles);
+    F.ChkRenamePartialTask.OnChange := @F.SyncPartialCheck;
+    F.ChkTrashTorrent := MakeCheck(Gb1, 14, 76, 'Move original .torrent file to Recycle Bin after adding', Config.TrashOriginalTorrentFiles);
+    F.ChkPreventSleep := MakeCheck(Gb1, 14, 102, 'Avoid system entering suspend/sleeping mode when any task is running', DesktopPrefs.PreventSleepWhenActive);
 
-    F.SpnQueueDown := TSpinEdit.Create(TsDown);
-    F.SpnQueueDown.Parent := TsDown;
-    F.SpnQueueDown.Left := 220; F.SpnQueueDown.Top := 192; F.SpnQueueDown.Width := 80;
-    F.SpnQueueDown.MinValue := 1;
-    F.SpnQueueDown.MaxValue := 100;
-    F.SpnQueueDown.Value := Config.DownloadQueueSize;
+    Gb2 := MakeGroup(F.Pages[2], 156, 86, 'When Download Finished');
+    F.ChkFinishSound := MakeCheck(Gb2, 14, 24, 'Play sound when task finished', DesktopPrefs.PlaySoundOnFinish);
+    F.ChkFinishNotify := MakeCheck(Gb2, 14, 50, 'Display notification when task finished', DesktopPrefs.ShowNotifyOnFinish);
 
-    // 3. Seeding Tab
-    TsSeed := PC.AddTabSheet;
-    TsSeed.Caption := 'Seeding';
+    Gb3 := MakeGroup(F.Pages[2], 250, 104, 'Task Queue');
+    F.ChkQueueDown := MakeCheck(Gb3, 14, 26, 'Maximum number of concurrent downloading BitTorrent tasks:', Config.DownloadQueueEnabled);
+    F.SpnQueueDown := MakeSpin(Gb3, 415, 22, 85, 1, 200, Config.DownloadQueueSize);
+    F.ChkQueueSeed := MakeCheck(Gb3, 14, 60, 'Maximum number of concurrent seeding BitTorrent tasks:', Config.SeedQueueEnabled);
+    F.SpnQueueSeed := MakeSpin(Gb3, 415, 56, 85, 1, 200, Config.SeedQueueSize);
 
-    F.ChkRatioLimit := TCheckBox.Create(TsSeed);
-    F.ChkRatioLimit.Parent := TsSeed;
-    F.ChkRatioLimit.Left := 20; F.ChkRatioLimit.Top := 28;
-    F.ChkRatioLimit.Caption := 'Stop seeding at ratio:';
-    F.ChkRatioLimit.Checked := Config.SeedRatioLimited;
-
-    F.EdtRatioLimit := TEdit.Create(TsSeed);
-    F.EdtRatioLimit.Parent := TsSeed;
-    F.EdtRatioLimit.Left := 210; F.EdtRatioLimit.Top := 24; F.EdtRatioLimit.Width := 80;
-    F.EdtRatioLimit.Text := Format('%.2f', [Config.SeedRatioLimit]);
-
-    F.ChkIdleLimit := TCheckBox.Create(TsSeed);
-    F.ChkIdleLimit.Parent := TsSeed;
-    F.ChkIdleLimit.Left := 20; F.ChkIdleLimit.Top := 68;
-    F.ChkIdleLimit.Caption := 'Stop seeding if idle for (minutes):';
-    F.ChkIdleLimit.Checked := Config.IdleSeedingLimited;
-
-    F.SpnIdleLimit := TSpinEdit.Create(TsSeed);
-    F.SpnIdleLimit.Parent := TsSeed;
-    F.SpnIdleLimit.Left := 250; F.SpnIdleLimit.Top := 64; F.SpnIdleLimit.Width := 80;
-    F.SpnIdleLimit.MaxValue := 99999;
-    F.SpnIdleLimit.Value := Config.IdleSeedingLimit;
-
-    // 4. Privacy Tab
-    TsPriv := PC.AddTabSheet;
-    TsPriv.Caption := 'Privacy';
-
-    Lbl := TLabel.Create(TsPriv);
-    Lbl.Parent := TsPriv;
-    Lbl.Left := 16; Lbl.Top := 20;
-    Lbl.Caption := 'Encryption mode:';
-
-    F.CmbEncryption := TComboBox.Create(TsPriv);
-    F.CmbEncryption.Parent := TsPriv;
-    F.CmbEncryption.Left := 140; F.CmbEncryption.Top := 16; F.CmbEncryption.Width := 180;
+    // --- Page 3: BitTorrent ---
+    Gb1 := MakeGroup(F.Pages[3], 8, 148, 'Protocol & Peer Discovery');
+    MakeLabel(Gb1, 14, 26, 'Protocol encryption mode:');
+    F.CmbEncryption := TComboBox.Create(Gb1);
+    F.CmbEncryption.Parent := Gb1;
+    F.CmbEncryption.Left := 190; F.CmbEncryption.Top := 22; F.CmbEncryption.Width := 200;
     F.CmbEncryption.Style := csDropDownList;
-    F.CmbEncryption.Items.Add('Allow encryption');
-    F.CmbEncryption.Items.Add('Prefer encryption');
-    F.CmbEncryption.Items.Add('Require encryption');
+    F.CmbEncryption.Items.Add('Allow encryption (Tolerated)');
+    F.CmbEncryption.Items.Add('Prefer encryption (Default)');
+    F.CmbEncryption.Items.Add('Require encryption (Strict)');
     if Config.Encryption = 'required' then
       F.CmbEncryption.ItemIndex := 2
     else if Config.Encryption = 'tolerated' then
       F.CmbEncryption.ItemIndex := 0
     else
       F.CmbEncryption.ItemIndex := 1;
+    F.ChkPex := MakeCheck(Gb1, 14, 58, 'Enable Peer Exchange (PEX) for public torrents', Config.PexEnabled);
+    F.ChkDht := MakeCheck(Gb1, 14, 84, 'Enable Distributed Hash Table (DHT) Network', Config.DhtEnabled);
+    F.ChkLpd := MakeCheck(Gb1, 14, 110, 'Enable Local Peer Discovery (LPD)', Config.LpdEnabled);
 
-    F.ChkPex := TCheckBox.Create(TsPriv);
-    F.ChkPex.Parent := TsPriv;
-    F.ChkPex.Left := 16; F.ChkPex.Top := 56;
-    F.ChkPex.Caption := 'Use Peer Exchange (PEX) for public torrents';
-    F.ChkPex.Checked := Config.PexEnabled;
+    Gb2 := MakeGroup(F.Pages[3], 164, 152, 'Peer Limits & Tracker Packet Control');
+    MakeLabel(Gb2, 14, 28, 'Max peers per torrent:');
+    F.SpnPeerPerTorrent := MakeSpin(Gb2, 220, 24, 90, 1, 2000, Config.PeerLimitPerTorrent);
+    MakeLabel(Gb2, 14, 60, 'Global max peer connections:');
+    F.SpnPeerGlobal := MakeSpin(Gb2, 220, 56, 90, 1, 5000, Config.PeerLimitGlobal);
+    F.ChkBlockTrackers := MakeCheck(Gb2, 14, 98, 'Block ALL outgoing tracker packets globally (No Tracker Mode)', Config.TrackerPaused);
 
-    F.ChkDht := TCheckBox.Create(TsPriv);
-    F.ChkDht.Parent := TsPriv;
-    F.ChkDht.Left := 16; F.ChkDht.Top := 82;
-    F.ChkDht.Caption := 'Use Distributed Hash Table (DHT) for public torrents';
-    F.ChkDht.Checked := Config.DhtEnabled;
+    // --- Page 4: Seeding Rules ---
+    Gb1 := MakeGroup(F.Pages[4], 8, 120, 'Auto-Stop Seeding Conditions');
+    F.ChkRatioLimit := MakeCheck(Gb1, 14, 28, 'Stop seeding when share ratio reaches:', Config.SeedRatioLimited);
+    F.EdtRatioLimit := TEdit.Create(Gb1);
+    F.EdtRatioLimit.Parent := Gb1;
+    F.EdtRatioLimit.Left := 290; F.EdtRatioLimit.Top := 24; F.EdtRatioLimit.Width := 90;
+    F.EdtRatioLimit.Text := Format('%.2f', [Config.SeedRatioLimit]);
+    F.ChkIdleLimit := MakeCheck(Gb1, 14, 66, 'Stop seeding if idle for (minutes):', Config.IdleSeedingLimited);
+    F.SpnIdleLimit := MakeSpin(Gb1, 290, 62, 90, 1, 99999, Config.IdleSeedingLimit);
 
-    F.ChkLpd := TCheckBox.Create(TsPriv);
-    F.ChkLpd.Parent := TsPriv;
-    F.ChkLpd.Left := 16; F.ChkLpd.Top := 108;
-    F.ChkLpd.Caption := 'Use Local Peer Discovery (LPD) for public torrents';
-    F.ChkLpd.Checked := Config.LpdEnabled;
-
-    F.ChkBlocklist := TCheckBox.Create(TsPriv);
-    F.ChkBlocklist.Parent := TsPriv;
-    F.ChkBlocklist.Left := 16; F.ChkBlocklist.Top := 146;
-    F.ChkBlocklist.Caption := 'Enable blocklist URL:';
-    F.ChkBlocklist.Checked := Config.BlocklistEnabled;
-
-    F.EdtBlocklistUrl := TEdit.Create(TsPriv);
-    F.EdtBlocklistUrl.Parent := TsPriv;
-    F.EdtBlocklistUrl.Left := 16; F.EdtBlocklistUrl.Top := 170; F.EdtBlocklistUrl.Width := 440;
+    // --- Page 5: IP Filter / Blocklist ---
+    Gb1 := MakeGroup(F.Pages[5], 8, 145, 'Peer IP Blocklist');
+    F.ChkBlocklist := MakeCheck(Gb1, 14, 24, 'Enable IP blocklist from URL:', Config.BlocklistEnabled);
+    F.EdtBlocklistUrl := TEdit.Create(Gb1);
+    F.EdtBlocklistUrl.Parent := Gb1;
+    F.EdtBlocklistUrl.Left := 14; F.EdtBlocklistUrl.Top := 52; F.EdtBlocklistUrl.Width := 504;
     F.EdtBlocklistUrl.Text := Config.BlocklistUrl;
-
-    F.LblBlocklistRules := TLabel.Create(TsPriv);
-    F.LblBlocklistRules.Parent := TsPriv;
-    F.LblBlocklistRules.Left := 16; F.LblBlocklistRules.Top := 204;
-    F.LblBlocklistRules.Caption := Format('Blocklist has %d rules', [Config.BlocklistSize]);
-
-    BtnUpdBlk := TButton.Create(TsPriv);
-    BtnUpdBlk.Parent := TsPriv;
-    BtnUpdBlk.Left := 346; BtnUpdBlk.Top := 200; BtnUpdBlk.Width := 110;
+    F.LblBlocklistRules := MakeLabel(Gb1, 14, 94, Format('Current blocklist: %d IP rules loaded', [Config.BlocklistSize]));
+    BtnUpdBlk := TButton.Create(Gb1);
+    BtnUpdBlk.Parent := Gb1;
+    BtnUpdBlk.Left := 388; BtnUpdBlk.Top := 88; BtnUpdBlk.Width := 130; BtnUpdBlk.Height := 26;
     BtnUpdBlk.Caption := 'Update Blocklist';
     BtnUpdBlk.OnClick := @F.BtnUpdateBlocklistClick;
 
-    // 5. Network Tab
-    TsNet := PC.AddTabSheet;
-    TsNet.Caption := 'Network';
-
-    Lbl := TLabel.Create(TsNet);
-    Lbl.Parent := TsNet;
-    Lbl.Left := 16; Lbl.Top := 22;
-    Lbl.Caption := 'Peer listening port:';
-
-    F.SpnPeerPort := TSpinEdit.Create(TsNet);
-    F.SpnPeerPort.Parent := TsNet;
-    F.SpnPeerPort.Left := 165; F.SpnPeerPort.Top := 18; F.SpnPeerPort.Width := 90;
-    F.SpnPeerPort.MinValue := 1;
-    F.SpnPeerPort.MaxValue := 65535;
-    F.SpnPeerPort.Value := Config.PeerPort;
-
-    BtnTestPort := TButton.Create(TsNet);
-    BtnTestPort.Parent := TsNet;
-    BtnTestPort.Left := 268; BtnTestPort.Top := 17; BtnTestPort.Width := 90;
-    BtnTestPort.Caption := 'Test Port';
-    BtnTestPort.OnClick := @F.BtnTestPortClick;
-
-    F.LblPortStatus := TLabel.Create(TsNet);
-    F.LblPortStatus.Parent := TsNet;
-    F.LblPortStatus.Left := 370; F.LblPortStatus.Top := 22;
-    F.LblPortStatus.Font.Style := [fsBold];
-    F.LblPortStatus.Caption := '';
-
-    F.ChkRandomPort := TCheckBox.Create(TsNet);
-    F.ChkRandomPort.Parent := TsNet;
-    F.ChkRandomPort.Left := 16; F.ChkRandomPort.Top := 54;
-    F.ChkRandomPort.Caption := 'Pick a random port every time Transmission is started';
-    F.ChkRandomPort.Checked := Config.PeerPortRandomOnStart;
-
-    F.ChkPortForwarding := TCheckBox.Create(TsNet);
-    F.ChkPortForwarding.Parent := TsNet;
-    F.ChkPortForwarding.Left := 16; F.ChkPortForwarding.Top := 82;
-    F.ChkPortForwarding.Caption := 'Use UPnP or NAT-PMP port forwarding from my router';
-    F.ChkPortForwarding.Checked := Config.PortForwardingEnabled;
-
-    F.ChkUtp := TCheckBox.Create(TsNet);
-    F.ChkUtp.Parent := TsNet;
-    F.ChkUtp.Left := 16; F.ChkUtp.Top := 110;
-    F.ChkUtp.Caption := 'Enable µTP for peer communication';
-    F.ChkUtp.Checked := Config.UtpEnabled;
-
-    Lbl := TLabel.Create(TsNet);
-    Lbl.Parent := TsNet;
-    Lbl.Left := 16; Lbl.Top := 152;
-    Lbl.Caption := 'Max peers per torrent:';
-
-    F.SpnPeerPerTorrent := TSpinEdit.Create(TsNet);
-    F.SpnPeerPerTorrent.Parent := TsNet;
-    F.SpnPeerPerTorrent.Left := 165; F.SpnPeerPerTorrent.Top := 148; F.SpnPeerPerTorrent.Width := 90;
-    F.SpnPeerPerTorrent.MinValue := 1;
-    F.SpnPeerPerTorrent.MaxValue := 2000;
-    F.SpnPeerPerTorrent.Value := Config.PeerLimitPerTorrent;
-
-    Lbl := TLabel.Create(TsNet);
-    Lbl.Parent := TsNet;
-    Lbl.Left := 16; Lbl.Top := 188;
-    Lbl.Caption := 'Max peers overall:';
-
-    F.SpnPeerGlobal := TSpinEdit.Create(TsNet);
-    F.SpnPeerGlobal.Parent := TsNet;
-    F.SpnPeerGlobal.Left := 165; F.SpnPeerGlobal.Top := 184; F.SpnPeerGlobal.Width := 90;
-    F.SpnPeerGlobal.MinValue := 1;
-    F.SpnPeerGlobal.MaxValue := 5000;
-    F.SpnPeerGlobal.Value := Config.PeerLimitGlobal;
-
-    // 6. Remote / Web UI Tab (matching PrefsDialog.ui Remote tab)
-    TsRemote := PC.AddTabSheet;
-    TsRemote.Caption := 'Remote / Web';
-
-    F.ChkWebEnabled := TCheckBox.Create(TsRemote);
-    F.ChkWebEnabled.Parent := TsRemote;
-    F.ChkWebEnabled.Left := 16; F.ChkWebEnabled.Top := 20;
-    F.ChkWebEnabled.Caption := 'Allow remote web access (Built-in Web UI Server)';
+    // --- Page 6: Remote / Web UI ---
+    Gb1 := MakeGroup(F.Pages[6], 8, 104, 'Built-in Web Server');
+    F.ChkWebEnabled := MakeCheck(Gb1, 14, 24, 'Allow remote web access (Built-in Web UI Server)',
+      (WebSrv = nil) or WebSrv.Enabled);
+    MakeLabel(Gb1, 34, 58, 'HTTP Listening Port:');
     if WebSrv <> nil then
-      F.ChkWebEnabled.Checked := WebSrv.Enabled
+      F.SpnWebPort := MakeSpin(Gb1, 180, 54, 95, 1, 65535, WebSrv.Port)
     else
-      F.ChkWebEnabled.Checked := True;
-
-    Lbl := TLabel.Create(TsRemote);
-    Lbl.Parent := TsRemote;
-    Lbl.Left := 36; Lbl.Top := 56;
-    Lbl.Caption := 'HTTP Port:';
-
-    F.SpnWebPort := TSpinEdit.Create(TsRemote);
-    F.SpnWebPort.Parent := TsRemote;
-    F.SpnWebPort.Left := 140; F.SpnWebPort.Top := 52; F.SpnWebPort.Width := 95;
-    F.SpnWebPort.MinValue := 1;
-    F.SpnWebPort.MaxValue := 65535;
-    if WebSrv <> nil then
-      F.SpnWebPort.Value := WebSrv.Port
-    else
-      F.SpnWebPort.Value := 9092;
-
-    BtnOpenWeb := TButton.Create(TsRemote);
-    BtnOpenWeb.Parent := TsRemote;
-    BtnOpenWeb.Left := 252; BtnOpenWeb.Top := 50; BtnOpenWeb.Width := 145;
+      F.SpnWebPort := MakeSpin(Gb1, 180, 54, 95, 1, 65535, 9092);
+    BtnOpenWeb := TButton.Create(Gb1);
+    BtnOpenWeb.Parent := Gb1;
+    BtnOpenWeb.Left := 290; BtnOpenWeb.Top := 52; BtnOpenWeb.Width := 145; BtnOpenWeb.Height := 26;
     BtnOpenWeb.Caption := 'Open Web Client';
     BtnOpenWeb.OnClick := @F.BtnOpenWebClientClick;
 
-    F.ChkWebAuth := TCheckBox.Create(TsRemote);
-    F.ChkWebAuth.Parent := TsRemote;
-    F.ChkWebAuth.Left := 16; F.ChkWebAuth.Top := 96;
-    F.ChkWebAuth.Caption := 'Use HTTP authentication';
-    if WebSrv <> nil then
-      F.ChkWebAuth.Checked := WebSrv.AuthEnabled
-    else
-      F.ChkWebAuth.Checked := False;
-
-    Lbl := TLabel.Create(TsRemote);
-    Lbl.Parent := TsRemote;
-    Lbl.Left := 36; Lbl.Top := 132;
-    Lbl.Caption := 'Username:';
-
-    F.EdtWebUser := TEdit.Create(TsRemote);
-    F.EdtWebUser.Parent := TsRemote;
-    F.EdtWebUser.Left := 140; F.EdtWebUser.Top := 128; F.EdtWebUser.Width := 190;
-    if WebSrv <> nil then
-      F.EdtWebUser.Text := WebSrv.Username
-    else
-      F.EdtWebUser.Text := 'admin';
-
-    Lbl := TLabel.Create(TsRemote);
-    Lbl.Parent := TsRemote;
-    Lbl.Left := 36; Lbl.Top := 168;
-    Lbl.Caption := 'Password:';
-
-    F.EdtWebPass := TEdit.Create(TsRemote);
-    F.EdtWebPass.Parent := TsRemote;
-    F.EdtWebPass.Left := 140; F.EdtWebPass.Top := 164; F.EdtWebPass.Width := 190;
+    Gb2 := MakeGroup(F.Pages[6], 120, 142, 'HTTP Authentication');
+    F.ChkWebAuth := MakeCheck(Gb2, 14, 24, 'Require username and password',
+      (WebSrv <> nil) and WebSrv.AuthEnabled);
+    MakeLabel(Gb2, 34, 60, 'Username:');
+    F.EdtWebUser := TEdit.Create(Gb2);
+    F.EdtWebUser.Parent := Gb2;
+    F.EdtWebUser.Left := 140; F.EdtWebUser.Top := 56; F.EdtWebUser.Width := 210;
+    if WebSrv <> nil then F.EdtWebUser.Text := WebSrv.Username else F.EdtWebUser.Text := 'admin';
+    MakeLabel(Gb2, 34, 94, 'Password:');
+    F.EdtWebPass := TEdit.Create(Gb2);
+    F.EdtWebPass.Parent := Gb2;
+    F.EdtWebPass.Left := 140; F.EdtWebPass.Top := 90; F.EdtWebPass.Width := 210;
     F.EdtWebPass.PasswordChar := '*';
-    if WebSrv <> nil then
-      F.EdtWebPass.Text := WebSrv.Password;
+    if WebSrv <> nil then F.EdtWebPass.Text := WebSrv.Password;
 
-    // 7. Desktop / Startup & Close Behavior Tab (ตั้งค่าเปิดพร้อม Windows และปุ่มปิดหน้าต่าง X)
-    TsDesktop := PC.AddTabSheet;
-    TsDesktop.Caption := 'Desktop';
-
+    // --- Page 7: Appearance & Startup ---
     AutoStartOn := GetWindowsAutoStart(AutoStartMin);
-
-    Lbl := TLabel.Create(TsDesktop);
-    Lbl.Parent := TsDesktop;
-    Lbl.Left := 16; Lbl.Top := 14;
-    Lbl.Font.Style := [fsBold];
-    Lbl.Caption := 'Windows Startup (เปิดโปรแกรมอัตโนมัติเมื่อเข้าระบบ)';
-
-    F.ChkAutoStart := TCheckBox.Create(TsDesktop);
-    F.ChkAutoStart.Parent := TsDesktop;
-    F.ChkAutoStart.Left := 28; F.ChkAutoStart.Top := 38;
-    F.ChkAutoStart.Caption := 'Start automatically when signing in to Windows (เปิดอัตโนมัติ)';
-    F.ChkAutoStart.Checked := AutoStartOn;
+    Gb1 := MakeGroup(F.Pages[7], 8, 92, 'Windows Startup');
+    F.ChkAutoStart := MakeCheck(Gb1, 14, 24, 'Start automatically when signing in to Windows (เปิดอัตโนมัติ)', AutoStartOn);
     F.ChkAutoStart.OnChange := @F.ChkAutoStartChange;
-
-    F.ChkStartMinimized := TCheckBox.Create(TsDesktop);
-    F.ChkStartMinimized.Parent := TsDesktop;
-    F.ChkStartMinimized.Left := 48; F.ChkStartMinimized.Top := 64;
-    F.ChkStartMinimized.Caption := 'Start minimized to system tray (เริ่มแบบย่อไปมุมขวาล่าง)';
-    F.ChkStartMinimized.Checked := AutoStartMin;
+    F.ChkStartMinimized := MakeCheck(Gb1, 34, 52, 'Start minimized to system tray (เริ่มแบบย่อไปมุมขวาล่าง)', AutoStartMin);
     F.ChkStartMinimized.Enabled := AutoStartOn;
 
-    Lbl := TLabel.Create(TsDesktop);
-    Lbl.Parent := TsDesktop;
-    Lbl.Left := 16; Lbl.Top := 102;
-    Lbl.Font.Style := [fsBold];
-    Lbl.Caption := 'Window Close Button Behavior (เมื่อกดปุ่มปิด X ของโปรแกรม)';
-
-    F.RbCloseExit := TRadioButton.Create(TsDesktop);
-    F.RbCloseExit.Parent := TsDesktop;
-    F.RbCloseExit.Left := 28; F.RbCloseExit.Top := 128;
+    Gb2 := MakeGroup(F.Pages[7], 110, 165, 'Window Close Button Behavior (เมื่อกดปุ่มปิด X)');
+    F.RbCloseExit := TRadioButton.Create(Gb2);
+    F.RbCloseExit.Parent := Gb2;
+    F.RbCloseExit.Left := 14; F.RbCloseExit.Top := 26;
     F.RbCloseExit.Caption := 'Exit program immediately (ปิดโปรแกรมทันที)';
-    F.RbCloseExit.Checked := not MinimizeToTray;
+    F.RbCloseExit.Checked := not DesktopPrefs.MinimizeToTray;
 
-    F.RbCloseTray := TRadioButton.Create(TsDesktop);
-    F.RbCloseTray.Parent := TsDesktop;
-    F.RbCloseTray.Left := 28; F.RbCloseTray.Top := 156;
+    F.RbCloseTray := TRadioButton.Create(Gb2);
+    F.RbCloseTray.Parent := Gb2;
+    F.RbCloseTray.Left := 14; F.RbCloseTray.Top := 54;
     F.RbCloseTray.Caption := 'Minimize to system tray (ย่อไปไว้มุมขวาล่าง)';
-    F.RbCloseTray.Checked := MinimizeToTray;
+    F.RbCloseTray.Checked := DesktopPrefs.MinimizeToTray;
 
-    Lbl := TLabel.Create(TsDesktop);
-    Lbl.Parent := TsDesktop;
-    Lbl.Left := 28; Lbl.Top := 192; Lbl.Width := 460; Lbl.Height := 72;
+    Lbl := MakeLabel(Gb2, 14, 88,
+      'คำแนะนำ: เมื่อเลือก "Minimize to system tray" การกดปุ่มปิด (X) จะซ่อนหน้าต่างลงไปที่มุมขวาล่าง ' +
+      'โดยโปรแกรมยังคงทำงานต่อเบื้องหลัง ดับเบิลคลิกไอคอนเพื่อเปิดกลับ หรือคลิกขวาแล้วเลือก Quit เพื่อปิดถาวร');
+    Lbl.Width := 502;
+    Lbl.Height := 58;
     Lbl.AutoSize := False;
     Lbl.WordWrap := True;
     Lbl.Font.Color := clGrayText;
-    Lbl.Caption :=
-      'คำแนะนำ: การเปิดอัตโนมัติจะบันทึกไว้ใน Windows Registry (HKCU\...\Run) ของผู้ใช้ปัจจุบัน ' +
-      'และหากเลือก "Minimize to system tray" การกดปุ่มปิด (X) จะซ่อนหน้าต่างลงไปที่มุมขวาล่างโดยไม่ปิดโปรแกรม';
+
+    // เปิดหน้า Connection (0) เป็นค่าเริ่มต้น
+    F.LstCategories.ItemIndex := 0;
+    F.SwitchCategory(0);
+
+    // 3. เส้นแบ่งด้านล่างและปุ่ม OK / Cancel / Apply (สไตล์ BitComet)
+    DivLine := TBevel.Create(F);
+    DivLine.Parent := F;
+    DivLine.Left := 8; DivLine.Top := 472; DivLine.Width := 744; DivLine.Height := 2;
+    DivLine.Shape := bsTopLine;
 
     BtnOK := TButton.Create(F);
     BtnOK.Parent := F;
-    BtnOK.Left := 364; BtnOK.Top := 330; BtnOK.Width := 80;
+    BtnOK.Left := 482; BtnOK.Top := 482; BtnOK.Width := 84; BtnOK.Height := 28;
     BtnOK.Caption := 'OK';
     BtnOK.Default := True;
     BtnOK.ModalResult := mrOk;
 
     BtnCancel := TButton.Create(F);
     BtnCancel.Parent := F;
-    BtnCancel.Left := 452; BtnCancel.Top := 330; BtnCancel.Width := 80;
+    BtnCancel.Left := 574; BtnCancel.Top := 482; BtnCancel.Width := 84; BtnCancel.Height := 28;
     BtnCancel.Caption := 'Cancel';
     BtnCancel.Cancel := True;
     BtnCancel.ModalResult := mrCancel;
 
+    BtnApply := TButton.Create(F);
+    BtnApply.Parent := F;
+    BtnApply.Left := 666; BtnApply.Top := 482; BtnApply.Width := 84; BtnApply.Height := 28;
+    BtnApply.Caption := 'Apply';
+    BtnApply.OnClick := @F.BtnApplyClick;
+
     if F.ShowModal = mrOk then
     begin
-      MinimizeToTray := F.RbCloseTray.Checked;
-      SetWindowsAutoStart(F.ChkAutoStart.Checked, F.ChkStartMinimized.Checked);
-      Args := TJSONObject.Create;
-      Args.Add('speed-limit-up-enabled', F.ChkUpLimit.Checked);
-      Args.Add('speed-limit-up', F.SpnUpLimit.Value);
-      Args.Add('speed-limit-down-enabled', F.ChkDownLimit.Checked);
-      Args.Add('speed-limit-down', F.SpnDownLimit.Value);
-      Args.Add('alt-speed-enabled', F.ChkAltEnabled.Checked);
-      Args.Add('alt-speed-up', F.SpnAltUp.Value);
-      Args.Add('alt-speed-down', F.SpnAltDown.Value);
-      Args.Add('download-dir', StringReplace(F.EdtDownloadDir.Text, '\', '/', [rfReplaceAll]));
-      Args.Add('start-added-torrents', F.ChkStartAdded.Checked);
-      Args.Add('rename-partial-files', F.ChkRenamePartial.Checked);
-      Args.Add('incomplete-dir-enabled', F.ChkIncompleteDir.Checked);
-      Args.Add('incomplete-dir', StringReplace(F.EdtIncompleteDir.Text, '\', '/', [rfReplaceAll]));
-      Args.Add('download-queue-enabled', F.ChkQueueDown.Checked);
-      Args.Add('download-queue-size', F.SpnQueueDown.Value);
-      Args.Add('seedRatioLimited', F.ChkRatioLimit.Checked);
-      Args.Add('seedRatioLimit', StrToFloatDef(F.EdtRatioLimit.Text, 2.0));
-      Args.Add('idle-seeding-limit-enabled', F.ChkIdleLimit.Checked);
-      Args.Add('idle-seeding-limit', F.SpnIdleLimit.Value);
-      case F.CmbEncryption.ItemIndex of
-        0: Args.Add('encryption', 'tolerated');
-        2: Args.Add('encryption', 'required');
-      else
-        Args.Add('encryption', 'preferred');
-      end;
-      Args.Add('pex-enabled', F.ChkPex.Checked);
-      Args.Add('dht-enabled', F.ChkDht.Checked);
-      Args.Add('lpd-enabled', F.ChkLpd.Checked);
-      Args.Add('blocklist-enabled', F.ChkBlocklist.Checked);
-      Args.Add('blocklist-url', F.EdtBlocklistUrl.Text);
-      Args.Add('peer-port', F.SpnPeerPort.Value);
-      Args.Add('peer-port-random-on-start', F.ChkRandomPort.Checked);
-      Args.Add('port-forwarding-enabled', F.ChkPortForwarding.Checked);
-      Args.Add('utp-enabled', F.ChkUtp.Checked);
-      Args.Add('peer-limit-per-torrent', F.SpnPeerPerTorrent.Value);
-      Args.Add('peer-limit-global', F.SpnPeerGlobal.Value);
-
-      Rpc.UpdateSession(Args);
-      Rpc.FetchSession(Config);
-
-      if WebSrv <> nil then
-      begin
-        WebSrv.Enabled := F.ChkWebEnabled.Checked;
-        WebSrv.Port := F.SpnWebPort.Value;
-        WebSrv.AuthEnabled := F.ChkWebAuth.Checked;
-        WebSrv.Username := Trim(F.EdtWebUser.Text);
-        WebSrv.Password := F.EdtWebPass.Text;
-        WebSrv.RestartServer;
-      end;
-
+      F.ApplySettings;
       Result := True;
-    end;
+    end
+    else
+      Result := F.AppliedOnce;
   finally
     F.Free;
   end;

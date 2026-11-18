@@ -69,7 +69,7 @@ type
     FUpdatingFilterCombo: Boolean;
     FModalDepth: Integer;
     FSessionSyncCounter: Integer;
-    FMinimizeToTray: Boolean;
+    FDesktopPrefs: TDesktopPrefs;
     FForceQuit: Boolean;
 
     // Top Menu
@@ -156,6 +156,8 @@ type
     procedure ApplyListItemHeight;
     procedure BeginModalPause;
     procedure EndModalPause;
+    procedure UpdateSleepPrevention;
+    procedure PrefsApplied(Sender: TObject);
 
     // Event Handlers
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -309,7 +311,10 @@ begin
     Width := Ini.ReadInteger('Window', 'Width', Width);
     Height := Ini.ReadInteger('Window', 'Height', Height);
     FDetailsHeight := EnsureRange(Ini.ReadInteger('Window', 'DetailsHeight', 260), 160, 480);
-    FMinimizeToTray := Ini.ReadBool('Window', 'MinimizeToTray', False);
+    FDesktopPrefs.MinimizeToTray := Ini.ReadBool('Window', 'MinimizeToTray', False);
+    FDesktopPrefs.PreventSleepWhenActive := Ini.ReadBool('Tasks', 'PreventSleepWhenActive', True);
+    FDesktopPrefs.PlaySoundOnFinish := Ini.ReadBool('Tasks', 'PlaySoundOnFinish', True);
+    FDesktopPrefs.ShowNotifyOnFinish := Ini.ReadBool('Tasks', 'ShowNotifyOnFinish', True);
     FCompactView := Ini.ReadBool('View', 'CompactView', True);
     FSortMode := TSortMode(EnsureRange(Ini.ReadInteger('View', 'SortMode', 0), 0, Ord(High(TSortMode))));
     FReverseSort := Ini.ReadBool('View', 'ReverseSort', False);
@@ -365,7 +370,10 @@ begin
       if (FDetailsPanel <> nil) and FDetailsPanel.Visible then
         FDetailsHeight := FDetailsPanel.Height;
       Ini.WriteInteger('Window', 'DetailsHeight', FDetailsHeight);
-      Ini.WriteBool('Window', 'MinimizeToTray', FMinimizeToTray);
+      Ini.WriteBool('Window', 'MinimizeToTray', FDesktopPrefs.MinimizeToTray);
+      Ini.WriteBool('Tasks', 'PreventSleepWhenActive', FDesktopPrefs.PreventSleepWhenActive);
+      Ini.WriteBool('Tasks', 'PlaySoundOnFinish', FDesktopPrefs.PlaySoundOnFinish);
+      Ini.WriteBool('Tasks', 'ShowNotifyOnFinish', FDesktopPrefs.ShowNotifyOnFinish);
       Ini.WriteBool('View', 'CompactView', FCompactView);
       Ini.WriteInteger('View', 'SortMode', Ord(FSortMode));
       Ini.WriteBool('View', 'ReverseSort', FReverseSort);
@@ -416,7 +424,10 @@ begin
   FModalDepth := 0;
   FSessionSyncCounter := 0;
   FDetailsHeight := 260;
-  FMinimizeToTray := False;
+  FDesktopPrefs.MinimizeToTray := False;
+  FDesktopPrefs.PreventSleepWhenActive := True;
+  FDesktopPrefs.PlaySoundOnFinish := True;
+  FDesktopPrefs.ShowNotifyOnFinish := True;
   FForceQuit := False;
   OnCloseQuery := @FormCloseQuery;
   Application.OnQueryEndSession := @AppQueryEndSession;
@@ -456,6 +467,7 @@ end;
 
 procedure TMainForm.FormDestroy(Sender: TObject);
 begin
+  SetPreventSystemSleep(False);
   if FTimerRefresh <> nil then
     FTimerRefresh.Enabled := False;
   if FTrayIcon <> nil then
@@ -2029,11 +2041,16 @@ begin
       if FKnownFinishedIds.IndexOf(PtrId) < 0 then
       begin
         FKnownFinishedIds.Add(PtrId);
-        if FFirstLoadDone and (FTrayIcon <> nil) then
+        if FFirstLoadDone then
         begin
-          FTrayIcon.BalloonTitle := 'Torrent Complete';
-          FTrayIcon.BalloonHint := T.Name + ' has finished downloading.';
-          FTrayIcon.ShowBalloonHint;
+          if FDesktopPrefs.ShowNotifyOnFinish and (FTrayIcon <> nil) then
+          begin
+            FTrayIcon.BalloonTitle := 'Torrent Complete';
+            FTrayIcon.BalloonHint := T.Name + ' has finished downloading.';
+            FTrayIcon.ShowBalloonHint;
+          end;
+          if FDesktopPrefs.PlaySoundOnFinish then
+            PlayCompletionSound;
         end;
       end;
     end;
@@ -2072,6 +2089,7 @@ begin
         end;
       end;
       CheckCompletedNotifications;
+      UpdateSleepPrevention;
       UpdateStateFilterCounts;
       RebuildTrackerFilterList;
       ApplyFilterAndSort;
@@ -2437,13 +2455,27 @@ begin
   end;
 end;
 
+procedure TMainForm.UpdateSleepPrevention;
+begin
+  SetPreventSystemSleep(
+    FDesktopPrefs.PreventSleepWhenActive and (FSessionStats.ActiveTorrentCount > 0));
+end;
+
+procedure TMainForm.PrefsApplied(Sender: TObject);
+begin
+  RenderStatusBarIcons;
+  UpdateStatusBarText;
+  UpdateSleepPrevention;
+  SaveAppSettings;
+end;
+
 procedure TMainForm.ActPreferences(Sender: TObject);
 var
   Ok: Boolean;
 begin
   BeginModalPause;
   try
-    Ok := ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig, FMinimizeToTray);
+    Ok := ShowPrefsDialog(Self, FRpc, FWebServer, FSessionConfig, FDesktopPrefs, @PrefsApplied);
   finally
     EndModalPause;
   end;
@@ -2611,7 +2643,7 @@ begin
     else if Pos('Start with Windows', FOptionsPopup.Items[I].Caption) > 0 then
       FOptionsPopup.Items[I].Checked := AutoStartOn
     else if Pos('Minimize to Tray', FOptionsPopup.Items[I].Caption) > 0 then
-      FOptionsPopup.Items[I].Checked := FMinimizeToTray
+      FOptionsPopup.Items[I].Checked := FDesktopPrefs.MinimizeToTray
     else if Pos('Block All Tracker', FOptionsPopup.Items[I].Caption) > 0 then
       FOptionsPopup.Items[I].Checked := FSessionConfig.TrackerPaused;
   end;
@@ -2633,7 +2665,7 @@ end;
 procedure TMainForm.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
 begin
   // หากเปิดตั้งค่า "ย่อไปมุมขวาล่างเมื่อปิด" และไม่ได้สั่ง Quit โดยตรง ให้ซ่อนหน้าต่างแทนการปิดโปรแกรม
-  if FMinimizeToTray and (not FForceQuit) and (not Application.Terminated) then
+  if FDesktopPrefs.MinimizeToTray and (not FForceQuit) and (not Application.Terminated) then
   begin
     CanClose := False;
     Hide;
@@ -2672,7 +2704,7 @@ end;
 
 procedure TMainForm.ActToggleMinimizeToTray(Sender: TObject);
 begin
-  FMinimizeToTray := not FMinimizeToTray;
+  FDesktopPrefs.MinimizeToTray := not FDesktopPrefs.MinimizeToTray;
   SaveAppSettings;
 end;
 
