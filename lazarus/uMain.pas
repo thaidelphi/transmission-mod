@@ -1230,7 +1230,7 @@ begin
   FLstTorrents.Align := alClient;
   FLstTorrents.BorderStyle := bsNone;
   FLstTorrents.Style := lbOwnerDrawFixed;
-  FLstTorrents.ItemHeight := 28;
+  FLstTorrents.ItemHeight := 40;
   FLstTorrents.MultiSelect := True;
   FLstTorrents.ExtendedSelect := True;
   FLstTorrents.Color := clWindow;
@@ -1309,10 +1309,11 @@ var
   C: TCanvas;
   T: TTorrentItem;
   IsSelected, TrkOff: Boolean;
-  BgCol, AccentCol, NameCol, SubCol, BarFillCol, BarBackCol, BarBorderCol, GlossCol: TColor;
+  BgCol, AccentCol, NameCol, SubCol, BarFillCol, BarBackCol, BarBorderCol: TColor;
   IconR, BarR, FillR, PillR: TRect;
   StatusStr, PctStr, Line2, Line3, BadgeTxt: string;
   StatusW, FillW, TextW, TextH, BadgeW, MaxTitleRight: Integer;
+  RowH, BarH, BarTop, BarRad, FillRad, IconTop, PillH, PillTop: Integer;
   PctFrac: Double;
 begin
   if (Index < 0) or (Index >= FFilteredTorrents.Count) then Exit;
@@ -1337,7 +1338,6 @@ begin
     NameCol := RGBToColor(185, 28, 28);
     AccentCol := RGBToColor(239, 68, 68);
     BarFillCol := RGBToColor(239, 68, 68);
-    GlossCol := RGBToColor(248, 113, 113);
     BarBackCol := RGBToColor(254, 226, 226);
     BarBorderCol := RGBToColor(252, 165, 165);
   end
@@ -1346,7 +1346,6 @@ begin
     NameCol := RGBToColor(100, 116, 139);
     AccentCol := RGBToColor(148, 163, 184);
     BarFillCol := RGBToColor(148, 163, 184);
-    GlossCol := RGBToColor(180, 192, 208);
     BarBackCol := RGBToColor(226, 232, 240);
     BarBorderCol := RGBToColor(203, 213, 225);
   end
@@ -1355,18 +1354,16 @@ begin
     NameCol := RGBToColor(15, 23, 42);
     AccentCol := RGBToColor(16, 185, 129);
     BarFillCol := RGBToColor(16, 185, 129);
-    GlossCol := RGBToColor(52, 211, 153);
     BarBackCol := RGBToColor(209, 250, 229);
-    BarBorderCol := RGBToColor(167, 243, 208);
+    BarBorderCol := RGBToColor(110, 231, 183);
   end
   else
   begin
     NameCol := RGBToColor(15, 23, 42);
     AccentCol := RGBToColor(37, 99, 235);
     BarFillCol := RGBToColor(37, 99, 235);
-    GlossCol := RGBToColor(96, 165, 250);
-    BarBackCol := RGBToColor(219, 234, 254);
-    BarBorderCol := RGBToColor(191, 219, 254);
+    BarBackCol := RGBToColor(224, 236, 254);
+    BarBorderCol := RGBToColor(179, 209, 252);
   end;
 
   if IsSelected then
@@ -1377,29 +1374,13 @@ begin
 
   SubCol := RGBToColor(100, 116, 139);
   PctFrac := EnsureRange(T.PercentDone, 0.0, 1.0);
+  RowH := ARect.Bottom - ARect.Top;
 
   if FCompactView then
   begin
-    IconR := Rect(ARect.Left + 10, ARect.Top + 7, ARect.Left + 32, ARect.Top + 29);
+    IconTop := ARect.Top + (RowH - 22) div 2;
+    IconR := Rect(ARect.Left + 12, IconTop, ARect.Left + 34, IconTop + 22);
     DrawFileIcon(C, IconR, T.IsPaused, T.HasError);
-
-    BarR := Rect(ARect.Right - 114, ARect.Top + 10, ARect.Right - 12, ARect.Bottom - 10);
-    C.Brush.Style := bsSolid;
-    C.Brush.Color := BarBackCol;
-    C.Pen.Color := BarBorderCol;
-    C.RoundRect(BarR.Left, BarR.Top, BarR.Right, BarR.Bottom, 8, 8);
-
-    FillW := Round((BarR.Right - BarR.Left - 2) * PctFrac);
-    if FillW > 3 then
-    begin
-      FillR := Rect(BarR.Left + 1, BarR.Top + 1, BarR.Left + 1 + FillW, BarR.Bottom - 1);
-      C.Brush.Color := BarFillCol;
-      C.Pen.Style := psClear;
-      C.RoundRect(FillR.Left, FillR.Top, FillR.Right, FillR.Bottom, 6, 6);
-      C.Brush.Color := GlossCol;
-      C.FillRect(Rect(FillR.Left + 2, FillR.Top + 1, FillR.Right - 2, FillR.Top + 3));
-      C.Pen.Style := psSolid;
-    end;
 
     PctStr := Format('%d%%', [Round(PctFrac * 100)]);
     C.Font.Name := 'Segoe UI';
@@ -1407,39 +1388,69 @@ begin
     C.Font.Style := [fsBold];
     TextW := C.TextWidth(PctStr);
     TextH := C.TextHeight(PctStr);
+
+    BarH := EnsureRange(TextH + 8, 22, Max(22, RowH - 12));
+    BarTop := ARect.Top + (RowH - BarH) div 2;
+    BarR := Rect(ARect.Right - 134, BarTop, ARect.Right - 14, BarTop + BarH);
+    BarRad := BarH;
+
+    C.Brush.Style := bsSolid;
+    C.Brush.Color := BarBackCol;
+    C.Pen.Style := psSolid;
+    C.Pen.Color := BarBorderCol;
+    C.RoundRect(BarR.Left, BarR.Top, BarR.Right, BarR.Bottom, BarRad, BarRad);
+
+    FillW := Round((BarR.Right - BarR.Left - 2) * PctFrac);
+    if PctFrac >= 0.9999 then
+      FillW := BarR.Right - BarR.Left - 2;
+    if FillW > 3 then
+    begin
+      FillR := Rect(BarR.Left + 1, BarR.Top + 1, BarR.Left + 1 + FillW, BarR.Bottom - 1);
+      FillRad := Min(BarH - 2, FillW);
+      C.Brush.Color := BarFillCol;
+      C.Pen.Style := psClear;
+      C.RoundRect(FillR.Left, FillR.Top, FillR.Right, FillR.Bottom, FillRad, FillRad);
+      C.Pen.Style := psSolid;
+    end;
+
     C.Brush.Style := bsClear;
     if FillW > (BarR.Right - BarR.Left) div 2 then
       C.Font.Color := clWhite
     else
-      C.Font.Color := RGBToColor(30, 41, 59);
+      C.Font.Color := RGBToColor(51, 65, 85);
     C.TextOut(
       BarR.Left + ((BarR.Right - BarR.Left) - TextW) div 2,
-      BarR.Top + ((BarR.Bottom - BarR.Top) - TextH) div 2,
+      BarR.Top + ((BarH - TextH) div 2) - 1,
       PctStr
     );
 
     StatusStr := T.ShortStatusString;
     C.Font.Size := 8;
     C.Font.Style := [];
-    C.Font.Color := SubCol;
+    if (T.RateDownload > 0) or (T.RateUpload > 0) then
+      C.Font.Color := RGBToColor(51, 65, 85)
+    else
+      C.Font.Color := SubCol;
     StatusW := C.TextWidth(StatusStr);
-    C.TextOut(BarR.Left - StatusW - 12, ARect.Top + ((ARect.Bottom - ARect.Top) - C.TextHeight(StatusStr)) div 2, StatusStr);
+    C.TextOut(BarR.Left - StatusW - 16, ARect.Top + (RowH - C.TextHeight(StatusStr)) div 2, StatusStr);
 
-    MaxTitleRight := BarR.Left - StatusW - 22;
+    MaxTitleRight := BarR.Left - StatusW - 26;
     if TrkOff then
     begin
       BadgeTxt := 'No Tracker';
       C.Font.Size := 7;
       C.Font.Style := [fsBold];
       BadgeW := C.TextWidth(BadgeTxt) + 12;
-      PillR := Rect(MaxTitleRight - BadgeW, ARect.Top + 9, MaxTitleRight, ARect.Bottom - 9);
+      PillH := EnsureRange(C.TextHeight(BadgeTxt) + 6, 18, Max(18, RowH - 12));
+      PillTop := ARect.Top + (RowH - PillH) div 2;
+      PillR := Rect(MaxTitleRight - BadgeW, PillTop, MaxTitleRight, PillTop + PillH);
       C.Brush.Style := bsSolid;
       C.Brush.Color := RGBToColor(254, 226, 226);
       C.Pen.Color := RGBToColor(252, 165, 165);
-      C.RoundRect(PillR.Left, PillR.Top, PillR.Right, PillR.Bottom, 8, 8);
+      C.RoundRect(PillR.Left, PillR.Top, PillR.Right, PillR.Bottom, PillH, PillH);
       C.Brush.Style := bsClear;
       C.Font.Color := RGBToColor(185, 28, 28);
-      C.TextOut(PillR.Left + 6, PillR.Top + ((PillR.Bottom - PillR.Top - C.TextHeight(BadgeTxt)) div 2), BadgeTxt);
+      C.TextOut(PillR.Left + 6, PillR.Top + ((PillH - C.TextHeight(BadgeTxt)) div 2) - 1, BadgeTxt);
       MaxTitleRight := PillR.Left - 8;
     end;
 
@@ -1452,13 +1463,13 @@ begin
     C.TextRect(
       Rect(IconR.Right + 10, ARect.Top + 2, MaxTitleRight, ARect.Bottom - 2),
       IconR.Right + 10,
-      ARect.Top + ((ARect.Bottom - ARect.Top) - C.TextHeight(T.Name)) div 2,
+      ARect.Top + (RowH - C.TextHeight(T.Name)) div 2,
       T.Name
     );
   end
   else
   begin
-    IconR := Rect(ARect.Left + 12, ARect.Top + 22, ARect.Left + 40, ARect.Top + 50);
+    IconR := Rect(ARect.Left + 12, ARect.Top + 24, ARect.Left + 40, ARect.Top + 52);
     DrawFileIcon(C, IconR, T.IsPaused, T.HasError);
 
     C.Brush.Style := bsClear;
@@ -1471,14 +1482,14 @@ begin
       C.Font.Size := 7;
       C.Font.Style := [fsBold];
       BadgeW := C.TextWidth(BadgeTxt) + 12;
-      PillR := Rect(MaxTitleRight - BadgeW, ARect.Top + 6, MaxTitleRight, ARect.Top + 23);
+      PillR := Rect(MaxTitleRight - BadgeW, ARect.Top + 6, MaxTitleRight, ARect.Top + 24);
       C.Brush.Style := bsSolid;
       C.Brush.Color := RGBToColor(254, 226, 226);
       C.Pen.Color := RGBToColor(252, 165, 165);
-      C.RoundRect(PillR.Left, PillR.Top, PillR.Right, PillR.Bottom, 8, 8);
+      C.RoundRect(PillR.Left, PillR.Top, PillR.Right, PillR.Bottom, 10, 10);
       C.Brush.Style := bsClear;
       C.Font.Color := RGBToColor(185, 28, 28);
-      C.TextOut(PillR.Left + 6, PillR.Top + ((PillR.Bottom - PillR.Top - C.TextHeight(BadgeTxt)) div 2), BadgeTxt);
+      C.TextOut(PillR.Left + 6, PillR.Top + ((PillR.Bottom - PillR.Top - C.TextHeight(BadgeTxt)) div 2) - 1, BadgeTxt);
       MaxTitleRight := PillR.Left - 8;
     end;
 
@@ -1486,8 +1497,8 @@ begin
     C.Font.Style := [fsBold];
     C.Font.Color := NameCol;
     C.TextRect(
-      Rect(IconR.Right + 12, ARect.Top + 4, MaxTitleRight, ARect.Top + 28),
-      IconR.Right + 12, ARect.Top + 4, T.Name
+      Rect(IconR.Right + 12, ARect.Top + 5, MaxTitleRight, ARect.Top + 29),
+      IconR.Right + 12, ARect.Top + 5, T.Name
     );
 
     Line2 := T.FullStatusString;
@@ -1496,21 +1507,23 @@ begin
     C.Font.Color := RGBToColor(71, 85, 105);
     C.TextOut(IconR.Right + 12, ARect.Top + 28, Line2);
 
-    BarR := Rect(IconR.Right + 12, ARect.Top + 46, ARect.Right - 58, ARect.Top + 58);
+    BarR := Rect(IconR.Right + 12, ARect.Top + 47, ARect.Right - 58, ARect.Top + 59);
     C.Brush.Style := bsSolid;
     C.Brush.Color := BarBackCol;
+    C.Pen.Style := psSolid;
     C.Pen.Color := BarBorderCol;
-    C.RoundRect(BarR.Left, BarR.Top, BarR.Right, BarR.Bottom, 6, 6);
+    C.RoundRect(BarR.Left, BarR.Top, BarR.Right, BarR.Bottom, 10, 10);
 
     FillW := Round((BarR.Right - BarR.Left - 2) * PctFrac);
+    if PctFrac >= 0.9999 then
+      FillW := BarR.Right - BarR.Left - 2;
     if FillW > 3 then
     begin
       FillR := Rect(BarR.Left + 1, BarR.Top + 1, BarR.Left + 1 + FillW, BarR.Bottom - 1);
+      FillRad := Min(10, FillW);
       C.Brush.Color := BarFillCol;
       C.Pen.Style := psClear;
-      C.RoundRect(FillR.Left, FillR.Top, FillR.Right, FillR.Bottom, 5, 5);
-      C.Brush.Color := GlossCol;
-      C.FillRect(Rect(FillR.Left + 2, FillR.Top + 1, FillR.Right - 2, FillR.Top + 3));
+      C.RoundRect(FillR.Left, FillR.Top, FillR.Right, FillR.Bottom, FillRad, FillRad);
       C.Pen.Style := psSolid;
     end;
 
@@ -1519,13 +1532,13 @@ begin
     C.Font.Size := 8;
     C.Font.Style := [fsBold];
     C.Font.Color := RGBToColor(51, 65, 85);
-    C.TextOut(BarR.Right + 8, BarR.Top - 2, PctStr);
+    C.TextOut(BarR.Right + 8, BarR.Top + ((BarR.Bottom - BarR.Top) - C.TextHeight(PctStr)) div 2, PctStr);
 
     Line3 := T.ProgressSummaryString(FSessionConfig.SeedRatioLimited, FSessionConfig.SeedRatioLimit);
     C.Font.Size := 8;
     C.Font.Style := [];
     C.Font.Color := SubCol;
-    C.TextOut(IconR.Right + 12, ARect.Top + 61, Line3);
+    C.TextOut(IconR.Right + 12, ARect.Top + 63, Line3);
   end;
 
   C.Pen.Color := RGBToColor(241, 245, 249);
@@ -1686,9 +1699,9 @@ begin
   if FLstTorrents = nil then Exit;
   SaveSelectedIds;
   if FCompactView then
-    FLstTorrents.ItemHeight := 36
+    FLstTorrents.ItemHeight := 40
   else
-    FLstTorrents.ItemHeight := 80;
+    FLstTorrents.ItemHeight := 84;
   for I := 0 to Min(FLstTorrents.Items.Count, FFilteredTorrents.Count) - 1 do
     FLstTorrents.Items.Objects[I] := {%H-}TObject(PtrUInt(TTorrentItem(FFilteredTorrents[I]).Id));
   RestoreSelectedIds;
