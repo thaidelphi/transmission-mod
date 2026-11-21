@@ -995,7 +995,7 @@ begin
     Bmp.Free;
   end;
 
-  // 4. Global Tracker Packet ON/OFF button icon & caption
+  // 4. Global Tracker Packet ON/OFF button icon & caption (ซิงค์กับสถานะปุ่มในแท็บ Trackers เสมอ)
   if FBtnGlobalTrackerPause <> nil then
   begin
     Bmp := TBitmap.Create;
@@ -1006,7 +1006,8 @@ begin
       C := Bmp.Canvas;
       C.Brush.Color := clFuchsia;
       C.FillRect(0, 0, 16, 16);
-      if FSessionConfig.TrackerPaused then
+      if FSessionConfig.TrackerPaused or
+         ((FDetailsPanel <> nil) and (FDetailsPanel.CurrentTorrentId > 0) and FDetailsPanel.IsTrackerPaused) then
       begin
         C.Pen.Color := RGBToColor(205, 45, 45);
         C.Pen.Width := 2;
@@ -1659,6 +1660,7 @@ begin
       FixBottomPanelOrder;
     end;
     FDetailsPanel.LoadTorrent(T.Id);
+    RenderStatusBarIcons;
   end
   else
   begin
@@ -1675,6 +1677,7 @@ begin
       FixBottomPanelOrder;
     end;
     FDetailsPanel.LoadTorrent(0);
+    RenderStatusBarIcons;
   end;
 end;
 
@@ -1700,17 +1703,8 @@ begin
 end;
 
 procedure TMainForm.DetailsPanelRequestGlobalTrackerUnpause(Sender: TObject);
-var
-  Args: TJSONObject;
 begin
-  FSessionConfig.TrackerPaused := False;
-  if FDetailsPanel <> nil then
-    FDetailsPanel.GlobalTrackerPaused := False;
-  RenderStatusBarIcons;
-  Args := TJSONObject.Create;
-  Args.Add('tracker_paused', False);
-  FRpc.UpdateSession(Args);
-  FSessionSyncCounter := 1;
+  ActToggleGlobalTrackerPause(Sender);
 end;
 
 procedure TMainForm.ApplyListItemHeight;
@@ -2316,6 +2310,7 @@ begin
       ApplyFilterAndSort;
       if (FDetailsPanel <> nil) and FDetailsPanel.Visible and (FDetailsPanel.CurrentTorrentId > 0) then
         FDetailsPanel.RefreshDetails;
+      RenderStatusBarIcons;
     end;
     UpdateStatusBarText;
   finally
@@ -2835,38 +2830,50 @@ end;
 procedure TMainForm.ActToggleGlobalTrackerPause(Sender: TObject);
 var
   Args: TJSONObject;
+  PrevPaused, NextPaused: Boolean;
+  AllIds: TIntegerDynArray;
+  I: Integer;
 begin
-  FSessionConfig.TrackerPaused := not FSessionConfig.TrackerPaused;
+  PrevPaused := FSessionConfig.TrackerPaused or
+    ((FDetailsPanel <> nil) and (FDetailsPanel.CurrentTorrentId > 0) and FDetailsPanel.IsTrackerPaused);
+  NextPaused := not PrevPaused;
+
+  FSessionConfig.TrackerPaused := NextPaused;
+  SetLength(AllIds, FAllTorrents.Count);
+  for I := 0 to FAllTorrents.Count - 1 do
+  begin
+    TTorrentItem(FAllTorrents[I]).TrackerPaused := NextPaused;
+    AllIds[I] := TTorrentItem(FAllTorrents[I]).Id;
+  end;
+
   if FDetailsPanel <> nil then
-    FDetailsPanel.GlobalTrackerPaused := FSessionConfig.TrackerPaused;
+    FDetailsPanel.SetUnifiedPausedState(NextPaused);
   RenderStatusBarIcons;
+  FLstTorrents.Invalidate;
+
   Args := TJSONObject.Create;
-  Args.Add('tracker_paused', FSessionConfig.TrackerPaused);
+  Args.Add('tracker_paused', NextPaused);
   if not FRpc.UpdateSession(Args) then
   begin
-    FSessionConfig.TrackerPaused := not FSessionConfig.TrackerPaused;
+    FSessionConfig.TrackerPaused := PrevPaused;
     if FDetailsPanel <> nil then
-      FDetailsPanel.GlobalTrackerPaused := FSessionConfig.TrackerPaused;
+      FDetailsPanel.SetUnifiedPausedState(PrevPaused);
     RenderStatusBarIcons;
+    FLstTorrents.Invalidate;
     MessageDlg('Tracker', 'Failed to change tracker state: ' + FRpc.LastError, mtError, [mbOK], 0);
     Exit;
   end;
+
+  if Length(AllIds) > 0 then
+    FRpc.SetTorrentsTrackerPaused(AllIds, NextPaused);
+
   FSessionSyncCounter := 1; // ไม่ให้รอบ sync ถัดไปเขียนทับค่าทันที
   RefreshFromRpc;
 end;
 
 procedure TMainForm.ActToggleSelectedTrackerPackets(Sender: TObject);
-var
-  Ids: TIntegerDynArray;
-  T: TTorrentItem;
-  NextPaused: Boolean;
 begin
-  Ids := GetSelectedTorrentIds;
-  T := GetFirstSelectedTorrent;
-  if (Length(Ids) = 0) or (T = nil) then Exit;
-  NextPaused := not T.TrackerPaused;
-  FRpc.SetTorrentsTrackerPaused(Ids, NextPaused);
-  RefreshFromRpc;
+  ActToggleGlobalTrackerPause(Sender);
 end;
 
 procedure TMainForm.ActToggleSelectedTrackerAutoPause(Sender: TObject);

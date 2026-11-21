@@ -135,6 +135,8 @@ type
     procedure LoadTorrent(ATorrentId: Integer);
     procedure RefreshDetails;
     procedure RecordGlobalSpeed(DownRate, UpRate: Int64);
+    function IsTrackerPaused: Boolean;
+    procedure SetUnifiedPausedState(APaused: Boolean);
 
     property CurrentTorrentId: Integer read FCurrentId;
     property GlobalTrackerPaused: Boolean read FGlobalTrackerPaused write SetGlobalTrackerPaused;
@@ -1690,6 +1692,18 @@ begin
     UpdateDynamicViews;
 end;
 
+function TDetailsPanel.IsTrackerPaused: Boolean;
+begin
+  Result := FOwnedTorrent.TrackerPaused or FGlobalTrackerPaused;
+end;
+
+procedure TDetailsPanel.SetUnifiedPausedState(APaused: Boolean);
+begin
+  FOwnedTorrent.TrackerPaused := APaused;
+  FGlobalTrackerPaused := APaused;
+  UpdateDynamicViews;
+end;
+
 procedure TDetailsPanel.SetGlobalTrackerPaused(AValue: Boolean);
 begin
   if FGlobalTrackerPaused = AValue then Exit;
@@ -2133,56 +2147,33 @@ end;
 
 procedure TDetailsPanel.BtnBlockTrkPacketsClick(Sender: TObject);
 var
-  EffPaused, NextPaused, Ok: Boolean;
+  EffPaused, NextPaused: Boolean;
   SessArgs: TJSONObject;
 begin
   if FCurrentId <= 0 then Exit;
   EffPaused := FOwnedTorrent.TrackerPaused or FGlobalTrackerPaused;
   NextPaused := not EffPaused;
 
-  if not NextPaused then
+  // หากอยู่ในหน้าต่างหลัก ให้ TMainForm ซิงค์ทั้งปุ่มในแท็บ Trackers และปุ่มบน StatusBar พร้อมกันทันที
+  if Assigned(FOnRequestGlobalTrackerUnpause) then
   begin
-    // เปิดส่ง Packet กลับเป็น ON: ปลดล็อกทั้งระดับทอร์เรนต์นี้และระดับ Global (หาก Global ถูกปิดอยู่)
-    Ok := True;
-    if FOwnedTorrent.TrackerPaused then
-    begin
-      FOwnedTorrent.TrackerPaused := False;
-      Ok := FRpc.SetTorrentsTrackerPaused([FCurrentId], False);
-    end;
-    if FGlobalTrackerPaused then
-    begin
-      FGlobalTrackerPaused := False;
-      if Assigned(FOnRequestGlobalTrackerUnpause) then
-        FOnRequestGlobalTrackerUnpause(Self)
-      else
-      begin
-        SessArgs := TJSONObject.Create;
-        SessArgs.Add('tracker_paused', False);
-        FRpc.UpdateSession(SessArgs);
-      end;
-    end;
-    UpdateDynamicViews;
-    if Ok then
-    begin
-      RefreshDetails;
-      NotifyDataChanged;
-    end;
+    FOnRequestGlobalTrackerUnpause(Self);
     Exit;
   end;
 
-  // สั่งปิดการส่ง Packet (OFF) สำหรับทอร์เรนต์นี้ทันที
-  FOwnedTorrent.TrackerPaused := True;
-  UpdateDynamicViews;
-  if FRpc.SetTorrentsTrackerPaused([FCurrentId], True) then
+  // กรณีเปิดในหน้าต่าง Properties แยก (ShowDetailsDialog) ให้ซิงค์ทั้งระดับทอร์เรนต์และเซสชันพร้อมกัน
+  SetUnifiedPausedState(NextPaused);
+  SessArgs := TJSONObject.Create;
+  SessArgs.Add('tracker_paused', NextPaused);
+  FRpc.UpdateSession(SessArgs);
+  if FRpc.SetTorrentsTrackerPaused([FCurrentId], NextPaused) then
   begin
-    FOwnedTorrent.TrackerPaused := True;
-    UpdateDynamicViews;
+    SetUnifiedPausedState(NextPaused);
     NotifyDataChanged;
   end
   else
   begin
-    FOwnedTorrent.TrackerPaused := False;
-    UpdateDynamicViews;
+    SetUnifiedPausedState(EffPaused);
     NotifyModalStart;
     try
       MessageDlg('Failed to toggle tracker packet state: ' + FRpc.LastError, mtError, [mbOK], 0);
