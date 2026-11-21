@@ -281,6 +281,7 @@ function SetTorrentFileAssociation(Enabled: Boolean): Boolean;
 function GetMagnetProtocolAssociation: Boolean;
 function SetMagnetProtocolAssociation(Enabled: Boolean): Boolean;
 function GetDefaultPortableDataDir: string;
+function NormalizeWinDirPath(const S: string): string;
 function GetCurrentUserDownloadsDir: string;
 function IsDirectoryWritable(const DirPath: string): Boolean;
 procedure ConfigureDaemonSslEnvironment;

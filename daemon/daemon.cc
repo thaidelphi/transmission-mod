@@ -310,7 +310,9 @@ void printMessage(
     {
         auto buf = std::array<char, 64>{};
         auto const timestr = tr_logGetTimeStr(now, std::data(buf), std::size(buf));
-        fmt::print(ostream, "[{:s}] {:s} {:s}\n", timestr, levelName(level), out.c_str());
+        auto line_buf = tr_strbuf<char, 2300U>{};
+        fmt::format_to(std::back_inserter(line_buf), "[{:s}] {:s} {:s}\n", timestr, levelName(level), out.c_str());
+        std::fwrite(std::data(line_buf), 1, std::size(line_buf), ostream);
     }
 
 #ifdef HAVE_SYSLOG

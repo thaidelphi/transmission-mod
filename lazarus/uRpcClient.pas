@@ -338,10 +338,11 @@ end;
 
 function TTransmissionRpcClient.EnsureLocalDaemonRunning: Boolean;
 var
-  DaemonExe, EffectiveDir: string;
+  DaemonExe, EffectiveDir, LogFile: string;
   Cfg: TSessionConfig;
   Retries, CandPort: Integer;
   CloseResp: TJSONObject;
+  LogSearch: TSearchRec;
 begin
   if not FIsLocalSession then
     Exit(True);
@@ -405,6 +406,18 @@ begin
     MigrateLegacyDaemonData(EffectiveDir);
     ConfigureDaemonSslEnvironment;
 
+    // ส่งเอาต์พุต Log ของ Daemon ไปที่ไฟล์ daemon.log เสมอ เพื่อป้องกัน fmt::print(stderr) แครชเมื่อรันแบบ poNoConsole
+    LogFile := IncludeTrailingPathDelimiter(EffectiveDir) + 'daemon.log';
+    if FindFirst(LogFile, faAnyFile, LogSearch) = 0 then
+    begin
+      try
+        if LogSearch.Size > 5 * 1024 * 1024 then
+          SysUtils.DeleteFile(LogFile);
+      finally
+        FindClose(LogSearch);
+      end;
+    end;
+
     FreeAndNil(FDaemonProcess);
     FDaemonProcess := TProcess.Create(nil);
     FDaemonProcess.Executable := DaemonExe;
@@ -412,6 +425,8 @@ begin
     FDaemonProcess.Parameters.Add('-f'); // รันในโหมด Foreground ของโปรเซสย่อยแต่ซ่อนหน้าต่างด้วย poNoConsole
     FDaemonProcess.Parameters.Add('-g');
     FDaemonProcess.Parameters.Add(EffectiveDir);
+    FDaemonProcess.Parameters.Add('-e');
+    FDaemonProcess.Parameters.Add(LogFile);
     FDaemonProcess.Parameters.Add('-p');
     FDaemonProcess.Parameters.Add(IntToStr(FPort));
     FDaemonProcess.Parameters.Add('-a');

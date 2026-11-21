@@ -3138,6 +3138,7 @@ var
   SR: TSearchRec;
   I: Integer;
   AlreadyLoaded, AnyRecovered: Boolean;
+  LoadedItem: TTorrentItem;
 begin
   if not FRpc.IsLocalSession then Exit;
   TorDir := IncludeTrailingPathDelimiter(GetEffectiveDataDir) + 'Torrents' + PathDelim;
@@ -3154,16 +3155,30 @@ begin
         BaseHash := ChangeFileExt(SR.Name, '');
         ResumeFile := ResDir + BaseHash + '.resume';
         AlreadyLoaded := False;
+        LoadedItem := nil;
         for I := 0 to FAllTorrents.Count - 1 do
           if SameText(TTorrentItem(FAllTorrents[I]).HashString, BaseHash) then
           begin
             AlreadyLoaded := True;
+            LoadedItem := TTorrentItem(FAllTorrents[I]);
             Break;
           end;
-        if (not AlreadyLoaded) and (not FileExists(ResumeFile)) then
+        if not FileExists(ResumeFile) then
         begin
-          if FRpc.AddTorrentFile(TorDir + SR.Name, DestDir, True, TR_PRI_NORMAL, [], AddedName) then
-            AnyRecovered := True;
+          if not AlreadyLoaded then
+          begin
+            if FRpc.AddTorrentFile(TorDir + SR.Name, DestDir, True, TR_PRI_NORMAL, [], AddedName) then
+              AnyRecovered := True;
+          end
+          else if (LoadedItem <> nil) and (LoadedItem.PercentDone = 0) and (DestDir <> '') and
+                  (not SameText(NormalizeWinDirPath(LoadedItem.DownloadDir), NormalizeWinDirPath(DestDir))) then
+          begin
+            if FRpc.SetTorrentLocation([LoadedItem.Id], DestDir, False) then
+            begin
+              LoadedItem.DownloadDir := DestDir;
+              AnyRecovered := True;
+            end;
+          end;
         end;
       until FindNext(SR) <> 0;
     finally
