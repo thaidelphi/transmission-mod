@@ -2282,7 +2282,18 @@ begin
     begin
       ClearAllTorrents;
       for I := 0 to NewList.Count - 1 do
+      begin
+        // หากทอร์เรนต์ที่ย้ายมาจากเครื่องอื่นยังชี้ไปโฟลเดอร์ของเครื่องเก่าที่เขียนไม่ได้ ให้ย้ายมาโฟลเดอร์ Downloads ของเครื่องนี้โดยอัตโนมัติ
+        if FRpc.IsLocalSession and (TTorrentItem(NewList[I]).PercentDone < 1.0) and
+           (not IsDirectoryWritable(TTorrentItem(NewList[I]).DownloadDir)) then
+        begin
+          if not IsDirectoryWritable(FSessionConfig.DownloadDir) then
+            FSessionConfig.DownloadDir := GetCurrentUserDownloadsDir;
+          FRpc.SetTorrentLocation([TTorrentItem(NewList[I]).Id], FSessionConfig.DownloadDir, False);
+          TTorrentItem(NewList[I]).DownloadDir := FSessionConfig.DownloadDir;
+        end;
         FAllTorrents.Add(NewList[I]);
+      end;
       NewList.Clear;
       FRpc.FetchSessionStats(FSessionStats);
       if FDetailsPanel <> nil then

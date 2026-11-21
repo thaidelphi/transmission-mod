@@ -281,6 +281,9 @@ function SetTorrentFileAssociation(Enabled: Boolean): Boolean;
 function GetMagnetProtocolAssociation: Boolean;
 function SetMagnetProtocolAssociation(Enabled: Boolean): Boolean;
 function GetDefaultPortableDataDir: string;
+function GetCurrentUserDownloadsDir: string;
+function IsDirectoryWritable(const DirPath: string): Boolean;
+procedure ConfigureDaemonSslEnvironment;
 function GetEmbeddedBinDir(const PreferredDataDir: string): string;
 function LoadDestinationDirHistory(OutDirs: TStrings; const FallbackDefaultDir: string): string;
 procedure SaveDestinationDirToHistory(const DirPath: string);
@@ -901,6 +904,90 @@ begin
     Result := ExcludeTrailingPathDelimiter(Result);
 end;
 
+procedure ConfigureDaemonSslEnvironment;
+begin
+  {$IFDEF WINDOWS}
+  // ป้องกันปัญหา libcurl (MSYS2 OpenSSL) หาไฟล์ /ucrt64/etc/ssl/certs/ca-bundle.crt ไม่เจอบนเครื่องอื่น
+  Windows.SetEnvironmentVariableW('TR_CURL_SSL_NO_VERIFY', '1');
+  Windows.SetEnvironmentVariableW('TR_CURL_PROXY_SSL_NO_VERIFY', '1');
+  {$ENDIF}
+end;
+
+function GetCurrentUserDownloadsDir: string;
+var
+  UserProf: string;
+begin
+  UserProf := Trim(SysUtils.GetEnvironmentVariable('USERPROFILE'));
+  if UserProf <> '' then
+  begin
+    Result := IncludeTrailingPathDelimiter(UserProf) + 'Downloads';
+    if ForceDirectories(Result) then
+      Exit;
+  end;
+  Result := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'Downloads';
+  ForceDirectories(Result);
+end;
+
+function IsOtherWindowsUserProfilePath(const CleanPath: string): Boolean;
+var
+  UserProf, UsersPrefix, Rest, TargetUserRoot: string;
+  SlashPos: Integer;
+begin
+  Result := False;
+  UserProf := NormalizeWinDirPath(SysUtils.GetEnvironmentVariable('USERPROFILE'));
+  if (UserProf = '') or (Length(CleanPath) < 10) then Exit;
+
+  // ตรวจสอบว่าพาธขึ้นต้นด้วย <Drive>:\Users\<Username> ที่ไม่ใช่ User ปัจจุบันของเครื่องนี้หรือไม่
+  UsersPrefix := ExtractFileDrive(UserProf) + PathDelim + 'Users' + PathDelim;
+  if SameText(Copy(CleanPath, 1, Length(UsersPrefix)), UsersPrefix) then
+  begin
+    Rest := Copy(CleanPath, Length(UsersPrefix) + 1, MaxInt);
+    SlashPos := Pos(PathDelim, Rest);
+    if SlashPos > 0 then
+      TargetUserRoot := UsersPrefix + Copy(Rest, 1, SlashPos - 1)
+    else
+      TargetUserRoot := UsersPrefix + Rest;
+    if (not SameText(TargetUserRoot, UserProf)) and
+       (not SameText(TargetUserRoot, UsersPrefix + 'Public')) then
+      Result := True;
+  end;
+end;
+
+var
+  GLastVerifiedWritableDir: string = '';
+
+function IsDirectoryWritable(const DirPath: string): Boolean;
+var
+  Clean, DriveRoot, TestFile: string;
+  FS: TFileStream;
+begin
+  Result := False;
+  Clean := NormalizeWinDirPath(DirPath);
+  if Clean = '' then Exit;
+  if IsOtherWindowsUserProfilePath(Clean) then Exit;
+
+  if (GLastVerifiedWritableDir <> '') and SameText(Clean, GLastVerifiedWritableDir) and DirectoryExists(Clean) then
+    Exit(True);
+
+  DriveRoot := ExtractFileDrive(Clean);
+  if (DriveRoot <> '') and (not DirectoryExists(DriveRoot + PathDelim)) then
+    Exit;
+
+  if not ForceDirectories(Clean) then
+    Exit;
+
+  TestFile := IncludeTrailingPathDelimiter(Clean) + '.tr_wchk_' + IntToStr(GetTickCount64 and $FFFF) + '.tmp';
+  try
+    FS := TFileStream.Create(TestFile, fmCreate);
+    FS.Free;
+    SysUtils.DeleteFile(TestFile);
+    GLastVerifiedWritableDir := Clean;
+    Result := True;
+  except
+    Result := False;
+  end;
+end;
+
 procedure AddUniqueDir(List: TStrings; const DirPath: string; PutAtTop: Boolean = False);
 var
   Clean: string;
@@ -936,7 +1023,7 @@ end;
 
 function LoadDestinationDirHistory(OutDirs: TStrings; const FallbackDefaultDir: string): string;
 var
-  IniPath, LastDir, ItemDir, HistPath, DataDir: string;
+  IniPath, LastDir, ItemDir, HistPath, DataDir, SafeDefault: string;
   Ini: TIniFile;
   Count, I: Integer;
   HistMgr: TDownloadHistoryManager;
@@ -953,14 +1040,16 @@ begin
     Ini := TIniFile.Create(IniPath);
     try
       LastDir := NormalizeWinDirPath(Ini.ReadString('DestinationHistory', 'LastDir', ''));
-      if LastDir <> '' then
-        AddUniqueDir(OutDirs, LastDir);
+      if (LastDir <> '') and IsDirectoryWritable(LastDir) then
+        AddUniqueDir(OutDirs, LastDir)
+      else
+        LastDir := '';
 
       Count := EnsureRange(Ini.ReadInteger('DestinationHistory', 'Count', 0), 0, 30);
       for I := 0 to Count - 1 do
       begin
         ItemDir := NormalizeWinDirPath(Ini.ReadString('DestinationHistory', 'Dir' + IntToStr(I), ''));
-        if ItemDir <> '' then
+        if (ItemDir <> '') and IsDirectoryWritable(ItemDir) then
           AddUniqueDir(OutDirs, ItemDir);
       end;
       DataDir := Trim(Ini.ReadString('Session', 'DataDir', ''));
@@ -969,8 +1058,8 @@ begin
     end;
   end;
 
-  // ดึงโฟลเดอร์ที่เคยใช้งานจากประวัติการดาวน์โหลด (download_history.json) มาเติมให้อัตโนมัติด้วย
-  if DataDir = '' then
+  // ดึงโฟลเดอร์ที่เคยใช้งานจากประวัติการดาวน์โหลด (download_history.json) เฉพาะที่เขียนได้จริงบนเครื่องนี้
+  if (DataDir = '') or (not IsDirectoryWritable(DataDir)) then
     DataDir := GetDefaultPortableDataDir;
   HistPath := IncludeTrailingPathDelimiter(DataDir) + 'download_history.json';
   if FileExists(HistPath) then
@@ -979,22 +1068,25 @@ begin
     try
       HistMgr.LoadFromFile(HistPath);
       for I := 0 to HistMgr.Count - 1 do
-        if HistMgr.GetItem(I) <> nil then
+        if (HistMgr.GetItem(I) <> nil) and IsDirectoryWritable(HistMgr.GetItem(I).DownloadDir) then
           AddUniqueDir(OutDirs, HistMgr.GetItem(I).DownloadDir);
     finally
       HistMgr.Free;
     end;
   end;
 
-  if Trim(FallbackDefaultDir) <> '' then
-    AddUniqueDir(OutDirs, FallbackDefaultDir);
+  SafeDefault := NormalizeWinDirPath(FallbackDefaultDir);
+  if (SafeDefault = '') or (not IsDirectoryWritable(SafeDefault)) then
+    SafeDefault := GetCurrentUserDownloadsDir;
+  AddUniqueDir(OutDirs, SafeDefault);
+  AddUniqueDir(OutDirs, GetCurrentUserDownloadsDir);
 
   if LastDir <> '' then
     Result := LastDir
   else if (OutDirs <> nil) and (OutDirs.Count > 0) then
     Result := OutDirs[0]
   else
-    Result := NormalizeWinDirPath(FallbackDefaultDir);
+    Result := SafeDefault;
 end;
 
 procedure SaveDestinationDirToHistory(const DirPath: string);

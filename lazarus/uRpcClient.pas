@@ -404,6 +404,7 @@ begin
       ForceDirectories(EffectiveDir);
     end;
     MigrateLegacyDaemonData(EffectiveDir);
+    ConfigureDaemonSslEnvironment;
 
     FreeAndNil(FDaemonProcess);
     FDaemonProcess := TProcess.Create(nil);
@@ -428,8 +429,8 @@ begin
       end;
     end;
 
-    // รอสูงสุด 4 วินาทีเพื่อให้ HTTP RPC Server ของ Daemon เริ่มต้นเสร็จ
-    for Retries := 1 to 16 do
+    // รอสูงสุด 6 วินาทีเพื่อให้ HTTP RPC Server ของ Daemon เริ่มต้นเสร็จ (เผื่อ Windows Defender สแกนครั้งแรกบนเครื่องอื่น)
+    for Retries := 1 to 24 do
     begin
       Sleep(250);
       if FetchSession(Cfg) then
@@ -642,9 +643,34 @@ end;
 { ดึงค่าการตั้งค่าทั้งหมดของเซสชันด้วยคำสั่ง `session-get` }
 function TTransmissionRpcClient.FetchSession(out Config: TSessionConfig): Boolean;
 var
-  Resp, Args: TJSONObject;
+  Resp, Args, FixArgs: TJSONObject;
 begin
   FillChar(Config, SizeOf(Config), 0);
+  Config.Version := '4.2.0-dev';
+  Config.RpcVersion := 17;
+  Config.DownloadDir := GetCurrentUserDownloadsDir;
+  Config.IncompleteDir := Config.DownloadDir;
+  Config.RenamePartialFiles := True;
+  Config.StartAddedTorrents := True;
+  Config.SpeedLimitDown := 100;
+  Config.SpeedLimitUp := 100;
+  Config.AltSpeedDown := 50;
+  Config.AltSpeedUp := 50;
+  Config.SeedRatioLimit := 2.0;
+  Config.IdleSeedingLimit := 30;
+  Config.Encryption := 'preferred';
+  Config.PexEnabled := True;
+  Config.DhtEnabled := True;
+  Config.UtpEnabled := True;
+  Config.PeerPort := 51413;
+  Config.PortForwardingEnabled := True;
+  Config.PeerLimitGlobal := 200;
+  Config.PeerLimitPerTorrent := 50;
+  Config.DownloadQueueEnabled := True;
+  Config.DownloadQueueSize := 5;
+  Config.SeedQueueSize := 10;
+  Config.CacheSizeMiB := 4;
+
   Result := SendRpcRequest('session-get', nil, Resp);
   if not Result then Exit;
   try
@@ -656,6 +682,23 @@ begin
     Config.DownloadDir := JsonGetStr(Args, 'download-dir', '');
     Config.IncompleteDir := JsonGetStr(Args, 'incomplete-dir', '');
     Config.IncompleteDirEnabled := JsonGetBool(Args, 'incomplete-dir-enabled', False);
+
+    // หากย้ายโปรแกรม/ข้อมูลไปเครื่องอื่นแล้วพาธ download-dir เดิม (เช่น C:\Users\Administrator\Downloads) เขียนไม่ได้ ให้เปลี่ยนเป็น Downloads ของเครื่องปัจจุบันทันที
+    if FIsLocalSession and (not IsDirectoryWritable(Config.DownloadDir)) then
+    begin
+      Config.DownloadDir := GetCurrentUserDownloadsDir;
+      if not FInEnsureDaemon then
+      begin
+        FixArgs := TJSONObject.Create;
+        FixArgs.Add('download-dir', StringReplace(Config.DownloadDir, '\', '/', [rfReplaceAll]));
+        if Config.IncompleteDirEnabled and (not IsDirectoryWritable(Config.IncompleteDir)) then
+        begin
+          Config.IncompleteDir := Config.DownloadDir;
+          FixArgs.Add('incomplete-dir', StringReplace(Config.IncompleteDir, '\', '/', [rfReplaceAll]));
+        end;
+        UpdateSession(FixArgs);
+      end;
+    end;
     Config.RenamePartialFiles := JsonGetBool(Args, 'rename-partial-files', True);
     Config.StartAddedTorrents := JsonGetBool(Args, 'start-added-torrents', True);
     Config.TrashOriginalTorrentFiles := JsonGetBool(Args, 'trash-original-torrent-files', False);
@@ -1050,7 +1093,9 @@ begin
 
   Args := TJSONObject.Create;
   Args.Add('metainfo', Encoded);
-  if Trim(DownloadDir) <> '' then
+  if FIsLocalSession and ((Trim(DownloadDir) = '') or (not IsDirectoryWritable(DownloadDir))) then
+    Args.Add('download-dir', StringReplace(GetCurrentUserDownloadsDir, '\', '/', [rfReplaceAll]))
+  else if Trim(DownloadDir) <> '' then
     Args.Add('download-dir', StringReplace(DownloadDir, '\', '/', [rfReplaceAll]));
   Args.Add('paused', not StartImmediately);
   Args.Add('bandwidthPriority', Priority);
@@ -1089,7 +1134,9 @@ begin
   AddedName := '';
   Args := TJSONObject.Create;
   Args.Add('filename', Trim(MagnetOrUrl));
-  if Trim(DownloadDir) <> '' then
+  if FIsLocalSession and ((Trim(DownloadDir) = '') or (not IsDirectoryWritable(DownloadDir))) then
+    Args.Add('download-dir', StringReplace(GetCurrentUserDownloadsDir, '\', '/', [rfReplaceAll]))
+  else if Trim(DownloadDir) <> '' then
     Args.Add('download-dir', StringReplace(DownloadDir, '\', '/', [rfReplaceAll]));
   Args.Add('paused', not StartImmediately);
   Args.Add('bandwidthPriority', Priority);
