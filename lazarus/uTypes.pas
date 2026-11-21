@@ -12,7 +12,7 @@ unit uTypes;
 interface
 
 uses
-  Classes, SysUtils, Math, fpjson, jsonparser, base64, zstream{$IFDEF WINDOWS}, Registry, Windows{$ENDIF};
+  Classes, SysUtils, Math, IniFiles, fpjson, jsonparser, base64, zstream{$IFDEF WINDOWS}, Registry, Windows{$ENDIF};
 
 const
   { ค่าคงที่สถานะของทอร์เรนต์ (ตรงกับ enum tr_torrent_activity ใน libtransmission) }
@@ -282,6 +282,8 @@ function GetMagnetProtocolAssociation: Boolean;
 function SetMagnetProtocolAssociation(Enabled: Boolean): Boolean;
 function GetDefaultPortableDataDir: string;
 function GetEmbeddedBinDir(const PreferredDataDir: string): string;
+function LoadDestinationDirHistory(OutDirs: TStrings; const FallbackDefaultDir: string): string;
+procedure SaveDestinationDirToHistory(const DirPath: string);
 function EnsureEmbeddedAsset(const ResName, TargetFilePath: string): Boolean;
 function ExportPortableBackup(const DestFilePath, DataDir, IniPath: string;
   History: TDownloadHistoryManager): Boolean;
@@ -890,6 +892,149 @@ end;
 function GetDefaultPortableDataDir: string;
 begin
   Result := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'data';
+end;
+
+function NormalizeWinDirPath(const S: string): string;
+begin
+  Result := Trim(StringReplace(S, '/', PathDelim, [rfReplaceAll]));
+  if (Length(Result) > 3) and (Result[Length(Result)] = PathDelim) then
+    Result := ExcludeTrailingPathDelimiter(Result);
+end;
+
+procedure AddUniqueDir(List: TStrings; const DirPath: string; PutAtTop: Boolean = False);
+var
+  Clean: string;
+  I, ExistingIdx: Integer;
+begin
+  if List = nil then Exit;
+  Clean := NormalizeWinDirPath(DirPath);
+  if Clean = '' then Exit;
+
+  ExistingIdx := -1;
+  for I := 0 to List.Count - 1 do
+    if SameText(NormalizeWinDirPath(List[I]), Clean) then
+    begin
+      ExistingIdx := I;
+      Break;
+    end;
+
+  if ExistingIdx >= 0 then
+  begin
+    if PutAtTop and (ExistingIdx > 0) then
+    begin
+      List.Delete(ExistingIdx);
+      List.Insert(0, Clean);
+    end;
+    Exit;
+  end;
+
+  if PutAtTop then
+    List.Insert(0, Clean)
+  else
+    List.Add(Clean);
+end;
+
+function LoadDestinationDirHistory(OutDirs: TStrings; const FallbackDefaultDir: string): string;
+var
+  IniPath, LastDir, ItemDir, HistPath, DataDir: string;
+  Ini: TIniFile;
+  Count, I: Integer;
+  HistMgr: TDownloadHistoryManager;
+begin
+  if OutDirs <> nil then
+    OutDirs.Clear;
+
+  IniPath := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'transmission_laz.ini';
+  LastDir := '';
+  DataDir := '';
+
+  if FileExists(IniPath) then
+  begin
+    Ini := TIniFile.Create(IniPath);
+    try
+      LastDir := NormalizeWinDirPath(Ini.ReadString('DestinationHistory', 'LastDir', ''));
+      if LastDir <> '' then
+        AddUniqueDir(OutDirs, LastDir);
+
+      Count := EnsureRange(Ini.ReadInteger('DestinationHistory', 'Count', 0), 0, 30);
+      for I := 0 to Count - 1 do
+      begin
+        ItemDir := NormalizeWinDirPath(Ini.ReadString('DestinationHistory', 'Dir' + IntToStr(I), ''));
+        if ItemDir <> '' then
+          AddUniqueDir(OutDirs, ItemDir);
+      end;
+      DataDir := Trim(Ini.ReadString('Session', 'DataDir', ''));
+    finally
+      Ini.Free;
+    end;
+  end;
+
+  // ดึงโฟลเดอร์ที่เคยใช้งานจากประวัติการดาวน์โหลด (download_history.json) มาเติมให้อัตโนมัติด้วย
+  if DataDir = '' then
+    DataDir := GetDefaultPortableDataDir;
+  HistPath := IncludeTrailingPathDelimiter(DataDir) + 'download_history.json';
+  if FileExists(HistPath) then
+  begin
+    HistMgr := TDownloadHistoryManager.Create;
+    try
+      HistMgr.LoadFromFile(HistPath);
+      for I := 0 to HistMgr.Count - 1 do
+        if HistMgr.GetItem(I) <> nil then
+          AddUniqueDir(OutDirs, HistMgr.GetItem(I).DownloadDir);
+    finally
+      HistMgr.Free;
+    end;
+  end;
+
+  if Trim(FallbackDefaultDir) <> '' then
+    AddUniqueDir(OutDirs, FallbackDefaultDir);
+
+  if LastDir <> '' then
+    Result := LastDir
+  else if (OutDirs <> nil) and (OutDirs.Count > 0) then
+    Result := OutDirs[0]
+  else
+    Result := NormalizeWinDirPath(FallbackDefaultDir);
+end;
+
+procedure SaveDestinationDirToHistory(const DirPath: string);
+const
+  MAX_RECENT_DIRS = 20;
+var
+  Clean, IniPath, KeyName: string;
+  Dirs: TStringList;
+  Ini: TIniFile;
+  I: Integer;
+begin
+  Clean := NormalizeWinDirPath(DirPath);
+  if Clean = '' then Exit;
+
+  Dirs := TStringList.Create;
+  try
+    LoadDestinationDirHistory(Dirs, '');
+    AddUniqueDir(Dirs, Clean, True);
+    while Dirs.Count > MAX_RECENT_DIRS do
+      Dirs.Delete(Dirs.Count - 1);
+
+    IniPath := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0))) + 'transmission_laz.ini';
+    try
+      Ini := TIniFile.Create(IniPath);
+      try
+        Ini.WriteString('DestinationHistory', 'LastDir', Clean);
+        Ini.WriteInteger('DestinationHistory', 'Count', Dirs.Count);
+        for I := 0 to Dirs.Count - 1 do
+        begin
+          KeyName := 'Dir' + IntToStr(I);
+          Ini.WriteString('DestinationHistory', KeyName, Dirs[I]);
+        end;
+      finally
+        Ini.Free;
+      end;
+    except
+    end;
+  finally
+    Dirs.Free;
+  end;
 end;
 
 function FileToRawStr(const FilePath: string): string;

@@ -204,7 +204,7 @@ type
     RpcRef: TTransmissionRpcClient;
     MetaPreview: TTorrentMetaPreview;
     EdtFile: TEdit;
-    EdtDir: TEdit;
+    EdtDir: TComboBox;
     LblTorrentSummary: TLabel;
     LblFreeSpace: TLabel;
     LvPreviewFiles: TListView;
@@ -270,9 +270,14 @@ procedure TOpenTorrentForm.BtnBrowseDirClick(Sender: TObject);
 var
   Dir: string;
 begin
-  Dir := EdtDir.Text;
+  Dir := Trim(EdtDir.Text);
   if SelectDirectory('Select Destination Folder', '', Dir) then
+  begin
+    SaveDestinationDirToHistory(Dir);
+    LoadDestinationDirHistory(EdtDir.Items, Dir);
     EdtDir.Text := Dir;
+    EdtDirChange(nil);
+  end;
 end;
 
 procedure TOpenTorrentForm.BtnSelectAllFilesClick(Sender: TObject);
@@ -310,6 +315,7 @@ var
   Lbl: TLabel;
   BtnFile, BtnDir, BtnSelAll, BtnSelNone, BtnOK, BtnCancel: TButton;
   I, UnwantedCount: Integer;
+  SessArgs: TJSONObject;
 begin
   Result := False;
   UnwantedFiles := nil;
@@ -359,12 +365,16 @@ begin
     F.LblFreeSpace.Left := 140; F.LblFreeSpace.Top := 68;
     F.LblFreeSpace.Font.Color := clGrayText;
 
-    F.EdtDir := TEdit.Create(F);
+    F.EdtDir := TComboBox.Create(F);
     F.EdtDir.Parent := F;
     F.EdtDir.Left := 16; F.EdtDir.Top := 88; F.EdtDir.Width := 420;
     F.EdtDir.Anchors := [akLeft, akTop, akRight];
-    F.EdtDir.Text := DefaultDir;
+    F.EdtDir.Style := csDropDown;
+    F.EdtDir.AutoComplete := True;
+    F.EdtDir.DropDownCount := 12;
+    F.EdtDir.Text := LoadDestinationDirHistory(F.EdtDir.Items, DefaultDir);
     F.EdtDir.OnChange := @F.EdtDirChange;
+    F.EdtDir.OnSelect := @F.EdtDirChange;
 
     BtnDir := TButton.Create(F);
     BtnDir.Parent := F;
@@ -458,6 +468,16 @@ begin
     begin
       SelectedFile := Trim(F.EdtFile.Text);
       DestDir := Trim(F.EdtDir.Text);
+      if DestDir <> '' then
+      begin
+        SaveDestinationDirToHistory(DestDir);
+        if Rpc <> nil then
+        begin
+          SessArgs := TJSONObject.Create;
+          SessArgs.Add('download-dir', StringReplace(DestDir, '\', '/', [rfReplaceAll]));
+          Rpc.UpdateSession(SessArgs);
+        end;
+      end;
       StartNow := F.ChkStart.Checked;
       TrashTorrent := F.ChkTrash.Checked;
       case F.CmbPriority.ItemIndex of
@@ -491,7 +511,7 @@ type
   public
     RpcRef: TTransmissionRpcClient;
     EdtUrl: TEdit;
-    EdtDir: TEdit;
+    EdtDir: TComboBox;
     LblFreeSpace: TLabel;
     CmbPriority: TComboBox;
     ChkStart: TCheckBox;
@@ -503,9 +523,14 @@ procedure TAddUrlForm.BtnBrowseDirClick(Sender: TObject);
 var
   Dir: string;
 begin
-  Dir := EdtDir.Text;
+  Dir := Trim(EdtDir.Text);
   if SelectDirectory('Select Destination Folder', '', Dir) then
+  begin
+    SaveDestinationDirToHistory(Dir);
+    LoadDestinationDirHistory(EdtDir.Items, Dir);
     EdtDir.Text := Dir;
+    EdtDirChange(nil);
+  end;
 end;
 
 procedure TAddUrlForm.EdtDirChange(Sender: TObject);
@@ -527,6 +552,7 @@ var
   Lbl: TLabel;
   BtnDir, BtnOK, BtnCancel: TButton;
   ClipStr: string;
+  SessArgs: TJSONObject;
 begin
   Result := False;
   F := TAddUrlForm.CreateNew(Owner);
@@ -563,11 +589,15 @@ begin
     F.LblFreeSpace.Left := 140; F.LblFreeSpace.Top := 72;
     F.LblFreeSpace.Font.Color := clGrayText;
 
-    F.EdtDir := TEdit.Create(F);
+    F.EdtDir := TComboBox.Create(F);
     F.EdtDir.Parent := F;
     F.EdtDir.Left := 16; F.EdtDir.Top := 92; F.EdtDir.Width := 360;
-    F.EdtDir.Text := DefaultDir;
+    F.EdtDir.Style := csDropDown;
+    F.EdtDir.AutoComplete := True;
+    F.EdtDir.DropDownCount := 12;
+    F.EdtDir.Text := LoadDestinationDirHistory(F.EdtDir.Items, DefaultDir);
     F.EdtDir.OnChange := @F.EdtDirChange;
+    F.EdtDir.OnSelect := @F.EdtDirChange;
 
     BtnDir := TButton.Create(F);
     BtnDir.Parent := F;
@@ -615,6 +645,16 @@ begin
     begin
       UrlOrMagnet := Trim(F.EdtUrl.Text);
       DestDir := Trim(F.EdtDir.Text);
+      if DestDir <> '' then
+      begin
+        SaveDestinationDirToHistory(DestDir);
+        if Rpc <> nil then
+        begin
+          SessArgs := TJSONObject.Create;
+          SessArgs.Add('download-dir', StringReplace(DestDir, '\', '/', [rfReplaceAll]));
+          Rpc.UpdateSession(SessArgs);
+        end;
+      end;
       StartNow := F.ChkStart.Checked;
       case F.CmbPriority.ItemIndex of
         0: Priority := TR_PRI_HIGH;
@@ -2688,6 +2728,8 @@ begin
   Args.Add('alt-speed-enabled', ChkAltEnabled.Checked);
   Args.Add('alt-speed-up', SpnAltUp.Value);
   Args.Add('alt-speed-down', SpnAltDown.Value);
+  if Trim(EdtDownloadDir.Text) <> '' then
+    SaveDestinationDirToHistory(Trim(EdtDownloadDir.Text));
   Args.Add('download-dir', StringReplace(EdtDownloadDir.Text, '\', '/', [rfReplaceAll]));
   Args.Add('start-added-torrents', ChkStartAdded.Checked);
   Args.Add('trash-original-torrent-files', ChkTrashTorrent.Checked);
@@ -3172,7 +3214,7 @@ end;
 type
   TRelocateForm = class(TForm)
   public
-    EdtDir: TEdit;
+    EdtDir: TComboBox;
     RbMove: TRadioButton;
     RbFind: TRadioButton;
     procedure BtnBrowseClick(Sender: TObject);
@@ -3182,9 +3224,13 @@ procedure TRelocateForm.BtnBrowseClick(Sender: TObject);
 var
   Dir: string;
 begin
-  Dir := EdtDir.Text;
+  Dir := Trim(EdtDir.Text);
   if SelectDirectory('Select New Torrent Location', '', Dir) then
+  begin
+    SaveDestinationDirToHistory(Dir);
+    LoadDestinationDirHistory(EdtDir.Items, Dir);
     EdtDir.Text := Dir;
+  end;
 end;
 
 function ShowRelocateDialog(Owner: TComponent; const CurrentDir: string;
@@ -3193,6 +3239,7 @@ var
   F: TRelocateForm;
   Lbl: TLabel;
   BtnBrowse, BtnOK, BtnCancel: TButton;
+  InitDir: string;
 begin
   Result := False;
   F := TRelocateForm.CreateNew(Owner);
@@ -3208,10 +3255,17 @@ begin
     Lbl.Left := 16; Lbl.Top := 16;
     Lbl.Caption := 'New location:';
 
-    F.EdtDir := TEdit.Create(F);
+    F.EdtDir := TComboBox.Create(F);
     F.EdtDir.Parent := F;
     F.EdtDir.Left := 16; F.EdtDir.Top := 36; F.EdtDir.Width := 340;
-    F.EdtDir.Text := CurrentDir;
+    F.EdtDir.Style := csDropDown;
+    F.EdtDir.AutoComplete := True;
+    F.EdtDir.DropDownCount := 12;
+    InitDir := LoadDestinationDirHistory(F.EdtDir.Items, CurrentDir);
+    if Trim(CurrentDir) <> '' then
+      F.EdtDir.Text := CurrentDir
+    else
+      F.EdtDir.Text := InitDir;
 
     BtnBrowse := TButton.Create(F);
     BtnBrowse.Parent := F;
@@ -3247,6 +3301,8 @@ begin
     if F.ShowModal = mrOk then
     begin
       NewDir := Trim(F.EdtDir.Text);
+      if NewDir <> '' then
+        SaveDestinationDirToHistory(NewDir);
       MoveData := F.RbMove.Checked;
       Result := NewDir <> '';
     end;

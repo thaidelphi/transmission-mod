@@ -2411,6 +2411,8 @@ begin
         if ShowOpenTorrentDialog(Self, FRpc, FileNames[I], FSessionConfig.DownloadDir,
              FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
         begin
+          if DestDir <> '' then
+            FSessionConfig.DownloadDir := DestDir;
           if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
           begin
             if TrashFile then
@@ -2450,6 +2452,8 @@ begin
     if ShowOpenTorrentDialog(Self, FRpc, SelFile, FSessionConfig.DownloadDir,
          FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
     begin
+      if DestDir <> '' then
+        FSessionConfig.DownloadDir := DestDir;
       if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
       begin
         if TrashFile then
@@ -2475,6 +2479,8 @@ begin
     if ShowAddUrlDialog(Self, FRpc, FSessionConfig.DownloadDir,
          FSessionConfig.StartAddedTorrents, UrlStr, DestDir, StartNow, Pri) then
     begin
+      if DestDir <> '' then
+        FSessionConfig.DownloadDir := DestDir;
       if not FRpc.AddTorrentUrl(UrlStr, DestDir, StartNow, Pri, AddedName) then
         MessageDlg('Failed to add URL/Magnet: ' + FRpc.LastError, mtError, [mbOK], 0);
     end;
@@ -3073,6 +3079,8 @@ begin
       if ShowOpenTorrentDialog(Self, FRpc, S, FSessionConfig.DownloadDir,
            FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
       begin
+        if DestDir <> '' then
+          FSessionConfig.DownloadDir := DestDir;
         if FRpc.AddTorrentFile(SelFile, DestDir, StartNow, Pri, Unwanted, AddedName) then
         begin
           if TrashFile then
