@@ -222,12 +222,13 @@ var
 begin
   AppDir := IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)));
 
-  Candidate := AppDir + 'transmission-daemon.exe';
-  if FileExists(Candidate) then Exit(Candidate);
-
+  // ใช้ daemon ที่ฝังใน EXE ก่อนเสมอ (เวอร์ชันตรงกับ GUI รองรับ ht..tps:// และ tracker_paused)
   BinDir := GetEmbeddedBinDir(FDataDir);
   Candidate := IncludeTrailingPathDelimiter(BinDir) + 'transmission-daemon.exe';
   if EnsureEmbeddedAsset('TR_DAEMON_Z', Candidate) then Exit(Candidate);
+
+  Candidate := AppDir + 'transmission-daemon.exe';
+  if FileExists(Candidate) then Exit(Candidate);
 
   Candidate := ExpandFileName(AppDir + '..\build\daemon\transmission-daemon.exe');
   if FileExists(Candidate) then Exit(Candidate);

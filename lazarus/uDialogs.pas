@@ -2091,7 +2091,10 @@ begin
   begin
     NotifyModalStart;
     try
-      MessageDlg('Failed to update trackers: ' + FRpc.LastError, mtError, [mbOK], 0);
+      MessageDlg('Failed to update trackers: ' + FRpc.LastError + LineEnding + LineEnding +
+        'daemon ที่เชื่อมต่ออยู่อาจเป็นเวอร์ชันเก่าที่ไม่รองรับ ht..tps:// ' +
+        '(เช่นมีไฟล์ transmission-daemon.exe เก่าวางข้างโปรแกรม หรือมี daemon อื่นเปิดค้างที่พอร์ต 9091) ' +
+        'ให้ปิดโปรแกรม ลบ/ปิด daemon ตัวเก่า แล้วเปิดใหม่', mtError, [mbOK], 0);
     finally
       NotifyModalEnd;
     end;

@@ -1015,7 +1015,6 @@ begin
         FBtnGlobalTrackerPause.Caption := 'Tracker: ON';
         FBtnGlobalTrackerPause.Font.Color := RGBToColor(25, 110, 50);
       end;
-      FBtnGlobalTrackerPause.Down := FSessionConfig.TrackerPaused;
       FBtnGlobalTrackerPause.Glyph.Assign(Bmp);
     finally
       Bmp.Free;
@@ -1140,8 +1139,6 @@ begin
   FBtnGlobalTrackerPause.Width := 118;
   FBtnGlobalTrackerPause.Height := 22;
   FBtnGlobalTrackerPause.Flat := True;
-  FBtnGlobalTrackerPause.GroupIndex := 3;
-  FBtnGlobalTrackerPause.AllowAllUp := True;
   FBtnGlobalTrackerPause.Margin := 3;
   FBtnGlobalTrackerPause.Spacing := 4;
   FBtnGlobalTrackerPause.Hint := 'ปิด/เปิด การส่ง Packet ไปหา Tracker ทั้งโปรแกรม';
@@ -2815,7 +2812,14 @@ begin
   RenderStatusBarIcons;
   Args := TJSONObject.Create;
   Args.Add('tracker_paused', FSessionConfig.TrackerPaused);
-  FRpc.UpdateSession(Args);
+  if not FRpc.UpdateSession(Args) then
+  begin
+    FSessionConfig.TrackerPaused := not FSessionConfig.TrackerPaused;
+    RenderStatusBarIcons;
+    MessageDlg('Tracker', 'Failed to change tracker state: ' + FRpc.LastError, mtError, [mbOK], 0);
+    Exit;
+  end;
+  FSessionSyncCounter := 1; // ไม่ให้รอบ sync ถัดไปเขียนทับค่าทันที
   RefreshFromRpc;
 end;
 
