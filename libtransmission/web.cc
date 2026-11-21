@@ -599,6 +599,8 @@ public:
 
         if (!curl_ssl_verify)
         {
+            (void)curl_easy_setopt(e, CURLOPT_CAINFO, NULL);
+            (void)curl_easy_setopt(e, CURLOPT_CAPATH, NULL);
 #if LIBCURL_VERSION_NUM >= 0x073400 /* 7.52.0 */
             (void)curl_easy_setopt(e, CURLOPT_SSL_VERIFYHOST, 0L);
             (void)curl_easy_setopt(e, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -611,7 +613,11 @@ public:
         else
         {
 #ifdef _WIN32
-            (void)curl_easy_setopt(e, CURLOPT_SSL_CTX_FUNCTION, ssl_context_func);
+            // Clear MSYS2's hardcoded /ucrt64/etc/ssl/certs/ca-bundle.crt so libcurl doesn't fail when MSYS2 is absent
+            (void)curl_easy_setopt(e, CURLOPT_CAINFO, NULL);
+            (void)curl_easy_setopt(e, CURLOPT_CAPATH, NULL);
+            (void)curl_easy_setopt(e, CURLOPT_SSL_VERIFYHOST, 0L);
+            (void)curl_easy_setopt(e, CURLOPT_SSL_VERIFYPEER, 0L);
 #endif
         }
 

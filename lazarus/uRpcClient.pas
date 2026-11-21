@@ -341,12 +341,11 @@ var
   DaemonExe, EffectiveDir: string;
   Cfg: TSessionConfig;
   Retries, CandPort: Integer;
+  CloseResp: TJSONObject;
 begin
   if not FIsLocalSession then
     Exit(True);
   if (FDaemonProcess <> nil) and FDaemonProcess.Running then
-    Exit(True);
-  if (FDaemonProcess = nil) and FConnected then
     Exit(True);
   if FInEnsureDaemon then
     Exit(False);
@@ -356,29 +355,29 @@ begin
     // แตกไฟล์ transmission-daemon.exe ที่ฝังใน EXE ออกมาไว้ที่ data\bin\ เสมอ
     DaemonExe := FindDaemonExecutable;
 
-    // ตรวจสอบว่ามี Daemon ตอบกลับที่พอร์ตนี้อยู่แล้วหรือไม่ (ข้ามหากโปรเซสที่เราเปิดเองเพิ่งดับไป เพื่อไม่ต้องรอ TCP timeout 2 วินาที)
+    // หากยังไม่มีโปรเซสที่เราเป็นเจ้าของ (FDaemonProcess = nil) แต่มี Daemon เก่าเปิดค้างอยู่ก่อนหน้า
+    // ให้สั่งปิด Daemon เก่าอย่างปลอดภัย (session-close + taskkill) แล้วแตกไฟล์และเปิด Daemon ตัวใหม่ที่เราเป็นเจ้าของแทนเสมอ
     if (FDaemonProcess = nil) and FetchSession(Cfg) then
     begin
-      if Cfg.SupportsTrackerPause then
-        Exit(True);
-
-      // พบโปรเซสเก่าหรือไม่ใช่ Modded Daemon (ไม่รองรับ tracker_paused / ht..tps://)
+      CloseResp := nil;
+      if SendRpcRequest('session-close', nil, CloseResp) then
+        CloseResp.Free;
+      Sleep(200);
       KillStaleLocalDaemons;
-      Sleep(350);
+      Sleep(300);
       FSessionId := '';
+      FConnected := False;
       DaemonExe := FindDaemonExecutable;
 
-      // หากพอร์ตเดิมยังถูกโปรแกรมอื่นครองอยู่ (เช่น transmission-qt เปิด Remote Access ค้างไว้) ให้ย้ายไปพอร์ตว่างอัตโนมัติ
-      if FetchSession(Cfg) and (not Cfg.SupportsTrackerPause) then
+      // หากพอร์ตเดิมยังถูกโปรแกรมอื่นที่ไม่ใช่ transmission-daemon ครองอยู่ (เช่น transmission-qt) ให้ย้ายไปพอร์ตว่างอัตโนมัติ
+      if FetchSession(Cfg) then
       begin
         for CandPort := 9093 to 9099 do
         begin
           FPort := CandPort;
           FSessionId := '';
           if not FetchSession(Cfg) then
-            Break
-          else if Cfg.SupportsTrackerPause then
-            Exit(True);
+            Break;
         end;
       end;
     end;

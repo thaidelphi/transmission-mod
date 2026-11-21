@@ -167,6 +167,7 @@ type
     procedure ProcessExternalOpenArg(const Arg: string);
     procedure HandleSingleInstancePayload(const Payload: string);
     procedure HandleInitialCliArgs;
+    procedure RecoverOrphanTorrentFiles;
 
     // Event Handlers
     procedure FormCloseQuery(Sender: TObject; var CanClose: Boolean);
@@ -517,6 +518,9 @@ begin
   FWebServer.StartServer;
   RenderStatusBarIcons;
   RefreshFromRpc;
+  RecoverOrphanTorrentFiles;
+  if not FSessionConfig.TrackerPaused then
+    FRpc.ReannounceTorrents([]);
   UpdateActionStates;
   HandleInitialCliArgs;
 
@@ -3126,6 +3130,48 @@ begin
   finally
     Lines.Free;
   end;
+end;
+
+procedure TMainForm.RecoverOrphanTorrentFiles;
+var
+  TorDir, ResDir, BaseHash, ResumeFile, DestDir, AddedName: string;
+  SR: TSearchRec;
+  I: Integer;
+  AlreadyLoaded, AnyRecovered: Boolean;
+begin
+  if not FRpc.IsLocalSession then Exit;
+  TorDir := IncludeTrailingPathDelimiter(GetEffectiveDataDir) + 'Torrents' + PathDelim;
+  ResDir := IncludeTrailingPathDelimiter(GetEffectiveDataDir) + 'Resume' + PathDelim;
+  if not DirectoryExists(TorDir) then Exit;
+
+  AnyRecovered := False;
+  DestDir := LoadDestinationDirHistory(nil, FSessionConfig.DownloadDir);
+  if FindFirst(TorDir + '*.torrent', faAnyFile and not faDirectory, SR) = 0 then
+  begin
+    try
+      repeat
+        if (SR.Attr and faDirectory) <> 0 then Continue;
+        BaseHash := ChangeFileExt(SR.Name, '');
+        ResumeFile := ResDir + BaseHash + '.resume';
+        AlreadyLoaded := False;
+        for I := 0 to FAllTorrents.Count - 1 do
+          if SameText(TTorrentItem(FAllTorrents[I]).HashString, BaseHash) then
+          begin
+            AlreadyLoaded := True;
+            Break;
+          end;
+        if (not AlreadyLoaded) and (not FileExists(ResumeFile)) then
+        begin
+          if FRpc.AddTorrentFile(TorDir + SR.Name, DestDir, True, TR_PRI_NORMAL, [], AddedName) then
+            AnyRecovered := True;
+        end;
+      until FindNext(SR) <> 0;
+    finally
+      FindClose(SR);
+    end;
+  end;
+  if AnyRecovered then
+    RefreshFromRpc;
 end;
 
 procedure TMainForm.HandleInitialCliArgs;

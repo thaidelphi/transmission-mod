@@ -1554,7 +1554,10 @@ var
 function AcquireSingleInstanceLock: Boolean;
 {$IFDEF WINDOWS}
 var
-  Err: DWORD;
+  Err, TargetPid: DWORD;
+  HMap, HProc: THandle;
+  P: PPtrUInt;
+  TargetHwnd: HWND;
 begin
   if GSingleInstanceMutex <> 0 then
     Exit(True);
@@ -1567,6 +1570,56 @@ begin
   begin
     CloseHandle(GSingleInstanceMutex);
     GSingleInstanceMutex := 0;
+
+    // หากผู้ใช้ดับเบิลคลิกเปิดไฟล์ .exe โดยตรง (ไม่มีอาร์กิวเมนต์ไฟล์ .torrent/magnet)
+    // ให้ปิดอินสแตนซ์เก่าที่อาจซ่อนค้างอยู่ใน System Tray แล้วเปิดอินสแตนซ์ใหม่แทนทันที
+    if ParamCount = 0 then
+    begin
+      TargetHwnd := 0;
+      HMap := OpenFileMappingW(FILE_MAP_READ, False,
+        PWideChar(UnicodeString('Local\TransmissionLazMainHwnd_V1')));
+      if HMap <> 0 then
+      begin
+        try
+          P := MapViewOfFile(HMap, FILE_MAP_READ, 0, 0, SizeOf(PtrUInt));
+          if P <> nil then
+          begin
+            TargetHwnd := HWND(P^);
+            UnmapViewOfFile(P);
+          end;
+        finally
+          CloseHandle(HMap);
+        end;
+      end;
+      if (TargetHwnd = 0) or (not IsWindow(TargetHwnd)) then
+        TargetHwnd := FindWindowW(nil, PWideChar(UnicodeString('Transmission')));
+      if (TargetHwnd <> 0) and IsWindow(TargetHwnd) then
+      begin
+        TargetPid := 0;
+        GetWindowThreadProcessId(TargetHwnd, @TargetPid);
+        if (TargetPid <> 0) and (TargetPid <> GetCurrentProcessId) then
+        begin
+          HProc := OpenProcess(PROCESS_TERMINATE or SYNCHRONIZE, False, TargetPid);
+          if HProc <> 0 then
+          begin
+            TerminateProcess(HProc, 0);
+            WaitForSingleObject(HProc, 1500);
+            CloseHandle(HProc);
+            Sleep(150);
+            GSingleInstanceMutex := CreateMutexW(nil, True,
+              PWideChar(UnicodeString('Local\TransmissionLazSingleInstance_V1')));
+            if (GSingleInstanceMutex <> 0) and (GetLastError <> ERROR_ALREADY_EXISTS) then
+              Exit(True);
+            if GSingleInstanceMutex <> 0 then
+            begin
+              CloseHandle(GSingleInstanceMutex);
+              GSingleInstanceMutex := 0;
+            end;
+          end;
+        end;
+      end;
+    end;
+
     Exit(False);
   end;
   Result := True;
