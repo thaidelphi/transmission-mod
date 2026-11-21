@@ -2432,7 +2432,7 @@ end;
 procedure TMainForm.ActOpenFile(Sender: TObject);
 var
   Dlg: TOpenDialog;
-  SelFile, DestDir, AddedName: string;
+  PickedFile, SelFile, DestDir, AddedName: string;
   StartNow, TrashFile: Boolean;
   Pri: Integer;
   Unwanted: TIntegerDynArray;
@@ -2444,12 +2444,12 @@ begin
       Dlg.Title := 'Open Torrent File';
       Dlg.Filter := 'Torrent Files (*.torrent)|*.torrent|All Files (*.*)|*.*';
       if not Dlg.Execute then Exit;
-      SelFile := Dlg.FileName;
+      PickedFile := Dlg.FileName;
     finally
       Dlg.Free;
     end;
 
-    if ShowOpenTorrentDialog(Self, FRpc, SelFile, FSessionConfig.DownloadDir,
+    if ShowOpenTorrentDialog(Self, FRpc, PickedFile, FSessionConfig.DownloadDir,
          FSessionConfig.StartAddedTorrents, SelFile, DestDir, StartNow, TrashFile, Pri, Unwanted) then
     begin
       if DestDir <> '' then

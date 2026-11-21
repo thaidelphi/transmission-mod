@@ -148,7 +148,7 @@ type
   end;
 
 function ShowOpenTorrentDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
-  const InitialFile, DefaultDir: string; DefaultStart: Boolean;
+  InitialFile: string; const DefaultDir: string; DefaultStart: Boolean;
   out SelectedFile, DestDir: string; out StartNow, TrashTorrent: Boolean;
   out Priority: Integer; out UnwantedFiles: TIntegerDynArray): Boolean;
 
@@ -307,7 +307,7 @@ begin
 end;
 
 function ShowOpenTorrentDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
-  const InitialFile, DefaultDir: string; DefaultStart: Boolean;
+  InitialFile: string; const DefaultDir: string; DefaultStart: Boolean;
   out SelectedFile, DestDir: string; out StartNow, TrashTorrent: Boolean;
   out Priority: Integer; out UnwantedFiles: TIntegerDynArray): Boolean;
 var
