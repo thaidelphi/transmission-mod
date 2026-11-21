@@ -81,6 +81,8 @@ type
     BtnBlockTrkPackets: TButton;
     ChkAutoPauseTrk: TCheckBox;
     FSyncingTrkChk: Boolean;
+    FGlobalTrackerPaused: Boolean;
+    FOnRequestGlobalTrackerUnpause: TNotifyEvent;
 
     ChkHonorSession: TCheckBox;
     ChkDownLimit: TCheckBox;
@@ -125,6 +127,7 @@ type
     procedure BtnToggleTrackerHttpsClick(Sender: TObject);
     procedure BtnBlockTrkPacketsClick(Sender: TObject);
     procedure ChkAutoPauseTrkClick(Sender: TObject);
+    procedure SetGlobalTrackerPaused(AValue: Boolean);
   public
     constructor CreatePanel(AOwner: TComponent; ARpc: TTransmissionRpcClient);
     destructor Destroy; override;
@@ -134,10 +137,12 @@ type
     procedure RecordGlobalSpeed(DownRate, UpRate: Int64);
 
     property CurrentTorrentId: Integer read FCurrentId;
+    property GlobalTrackerPaused: Boolean read FGlobalTrackerPaused write SetGlobalTrackerPaused;
     property PageControl: TPageControl read FPageControl;
     property OnDataChanged: TNotifyEvent read FOnDataChanged write FOnDataChanged;
     property OnModalStart: TNotifyEvent read FOnModalStart write FOnModalStart;
     property OnModalEnd: TNotifyEvent read FOnModalEnd write FOnModalEnd;
+    property OnRequestGlobalTrackerUnpause: TNotifyEvent read FOnRequestGlobalTrackerUnpause write FOnRequestGlobalTrackerUnpause;
   end;
 
 function ShowOpenTorrentDialog(Owner: TComponent; Rpc: TTransmissionRpcClient;
@@ -800,8 +805,10 @@ type
 { จัดรูปแบบรายการ Tracker ของทอร์เรนต์เป็นข้อความแบ่งบรรทัดและแบ่ง Tier ด้วยบรรทัดว่าง }
 function FormatTrackersAsText(Torrent: TTorrentItem): string;
 var
-  I, LastTier: Integer;
+  I, J, LastTier: Integer;
   SL: TStringList;
+  UrlStr: string;
+  IsDup: Boolean;
 begin
   Result := '';
   if Torrent = nil then Exit;
@@ -810,9 +817,20 @@ begin
     LastTier := -1;
     for I := 0 to High(Torrent.Trackers) do
     begin
+      UrlStr := Trim(Torrent.Trackers[I].Announce);
+      if UrlStr = '' then Continue;
+      IsDup := False;
+      for J := 0 to I - 1 do
+        if SameText(UrlStr, Trim(Torrent.Trackers[J].Announce)) then
+        begin
+          IsDup := True;
+          Break;
+        end;
+      if IsDup then Continue;
+
       if (LastTier >= 0) and (Torrent.Trackers[I].Tier <> LastTier) then
         SL.Add('');
-      SL.Add(Torrent.Trackers[I].Announce);
+      SL.Add(UrlStr);
       LastTier := Torrent.Trackers[I].Tier;
     end;
     Result := SL.Text;
@@ -1672,13 +1690,22 @@ begin
     UpdateDynamicViews;
 end;
 
+procedure TDetailsPanel.SetGlobalTrackerPaused(AValue: Boolean);
+begin
+  if FGlobalTrackerPaused = AValue then Exit;
+  FGlobalTrackerPaused := AValue;
+  UpdateDynamicViews;
+end;
+
 procedure TDetailsPanel.UpdateDynamicViews;
 var
   I: Integer;
   LI: TListItem;
   PctFile: Double;
+  EffTrkPaused: Boolean;
 begin
   if FCurrentId <= 0 then Exit;
+  EffTrkPaused := FOwnedTorrent.TrackerPaused or FGlobalTrackerPaused;
 
   LblHaveVal.Caption := Format('%s of %s (%s) - %s Unverified',
     [FormatSize(FOwnedTorrent.HaveTotal), FormatSize(FOwnedTorrent.SizeWhenDone),
@@ -1707,7 +1734,7 @@ begin
 
   if BtnBlockTrkPackets <> nil then
   begin
-    if FOwnedTorrent.TrackerPaused then
+    if EffTrkPaused then
       BtnBlockTrkPackets.Caption := 'Tracker Packet: OFF (คลิกเปิด)'
     else
       BtnBlockTrkPackets.Caption := 'Tracker Packet: ON (คลิกปิด)';
@@ -1756,7 +1783,10 @@ begin
       LI.Caption := IntToStr(FOwnedTorrent.Trackers[I].Tier + 1);
       LI.SubItems.Clear;
       LI.SubItems.Add(FOwnedTorrent.Trackers[I].Announce);
-      LI.SubItems.Add(FOwnedTorrent.Trackers[I].LastAnnounceResult);
+      if EffTrkPaused then
+        LI.SubItems.Add('OFF (หยุดส่ง Packet)')
+      else
+        LI.SubItems.Add(FOwnedTorrent.Trackers[I].LastAnnounceResult);
       if FOwnedTorrent.Trackers[I].SeederCount >= 0 then
         LI.SubItems.Add(IntToStr(FOwnedTorrent.Trackers[I].SeederCount))
       else
@@ -2103,17 +2133,56 @@ end;
 
 procedure TDetailsPanel.BtnBlockTrkPacketsClick(Sender: TObject);
 var
-  NextPaused: Boolean;
+  EffPaused, NextPaused, Ok: Boolean;
+  SessArgs: TJSONObject;
 begin
   if FCurrentId <= 0 then Exit;
-  NextPaused := not FOwnedTorrent.TrackerPaused;
-  if FRpc.SetTorrentsTrackerPaused([FCurrentId], NextPaused) then
+  EffPaused := FOwnedTorrent.TrackerPaused or FGlobalTrackerPaused;
+  NextPaused := not EffPaused;
+
+  if not NextPaused then
   begin
-    RefreshDetails;
+    // เปิดส่ง Packet กลับเป็น ON: ปลดล็อกทั้งระดับทอร์เรนต์นี้และระดับ Global (หาก Global ถูกปิดอยู่)
+    Ok := True;
+    if FOwnedTorrent.TrackerPaused then
+    begin
+      FOwnedTorrent.TrackerPaused := False;
+      Ok := FRpc.SetTorrentsTrackerPaused([FCurrentId], False);
+    end;
+    if FGlobalTrackerPaused then
+    begin
+      FGlobalTrackerPaused := False;
+      if Assigned(FOnRequestGlobalTrackerUnpause) then
+        FOnRequestGlobalTrackerUnpause(Self)
+      else
+      begin
+        SessArgs := TJSONObject.Create;
+        SessArgs.Add('tracker_paused', False);
+        FRpc.UpdateSession(SessArgs);
+      end;
+    end;
+    UpdateDynamicViews;
+    if Ok then
+    begin
+      RefreshDetails;
+      NotifyDataChanged;
+    end;
+    Exit;
+  end;
+
+  // สั่งปิดการส่ง Packet (OFF) สำหรับทอร์เรนต์นี้ทันที
+  FOwnedTorrent.TrackerPaused := True;
+  UpdateDynamicViews;
+  if FRpc.SetTorrentsTrackerPaused([FCurrentId], True) then
+  begin
+    FOwnedTorrent.TrackerPaused := True;
+    UpdateDynamicViews;
     NotifyDataChanged;
   end
   else
   begin
+    FOwnedTorrent.TrackerPaused := False;
+    UpdateDynamicViews;
     NotifyModalStart;
     try
       MessageDlg('Failed to toggle tracker packet state: ' + FRpc.LastError, mtError, [mbOK], 0);

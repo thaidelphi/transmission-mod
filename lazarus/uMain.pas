@@ -181,6 +181,7 @@ type
     procedure DetailsPanelDataChanged(Sender: TObject);
     procedure DetailsPanelModalStart(Sender: TObject);
     procedure DetailsPanelModalEnd(Sender: TObject);
+    procedure DetailsPanelRequestGlobalTrackerUnpause(Sender: TObject);
 
     procedure LstTorrentsDrawItem(Control: TWinControl; Index: Integer; ARect: TRect; State: TOwnerDrawState);
     procedure LstTorrentsMouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X, Y: Integer);
@@ -372,7 +373,9 @@ begin
     PassStr := Ini.ReadString('Session', 'Password', '');
     PathStr := Ini.ReadString('Session', 'UrlPath', '/transmission/rpc');
     FDesktopPrefs.DataDir := Trim(Ini.ReadString('Session', 'DataDir', ''));
-    if FDesktopPrefs.DataDir = '' then
+    if (FDesktopPrefs.DataDir = '') or
+       ((ExtractFileDrive(FDesktopPrefs.DataDir) <> '') and
+        (not DirectoryExists(ExtractFileDrive(FDesktopPrefs.DataDir) + PathDelim))) then
       FDesktopPrefs.DataDir := GetDefaultPortableDataDir;
     FRpc.DataDir := GetEffectiveDataDir;
     FRpc.Configure(HostStr, PortNum, UserStr, PassStr, LocalSess, PathStr);
@@ -425,7 +428,11 @@ begin
       Ini.WriteInteger('Session', 'Port', FRpc.Port);
       Ini.WriteString('Session', 'Username', FRpc.Username);
       Ini.WriteString('Session', 'UrlPath', FRpc.UrlPath);
-      Ini.WriteString('Session', 'DataDir', GetEffectiveDataDir);
+      if SameText(ExcludeTrailingPathDelimiter(GetEffectiveDataDir),
+                  ExcludeTrailingPathDelimiter(GetDefaultPortableDataDir)) then
+        Ini.WriteString('Session', 'DataDir', '')
+      else
+        Ini.WriteString('Session', 'DataDir', GetEffectiveDataDir);
 
       if FWebServer <> nil then
       begin
@@ -505,6 +512,8 @@ begin
   // Start or connect to local transmission-daemon automatically
   FRpc.EnsureLocalDaemonRunning;
   FRpc.FetchSession(FSessionConfig);
+  if FDetailsPanel <> nil then
+    FDetailsPanel.GlobalTrackerPaused := FSessionConfig.TrackerPaused;
   FWebServer.StartServer;
   RenderStatusBarIcons;
   RefreshFromRpc;
@@ -1209,6 +1218,7 @@ begin
   FDetailsPanel.OnDataChanged := @DetailsPanelDataChanged;
   FDetailsPanel.OnModalStart := @DetailsPanelModalStart;
   FDetailsPanel.OnModalEnd := @DetailsPanelModalEnd;
+  FDetailsPanel.OnRequestGlobalTrackerUnpause := @DetailsPanelRequestGlobalTrackerUnpause;
 
   FSplitDetails := TSplitter.Create(Self);
   FSplitDetails.Parent := Self;
@@ -1687,6 +1697,20 @@ end;
 procedure TMainForm.DetailsPanelModalEnd(Sender: TObject);
 begin
   EndModalPause;
+end;
+
+procedure TMainForm.DetailsPanelRequestGlobalTrackerUnpause(Sender: TObject);
+var
+  Args: TJSONObject;
+begin
+  FSessionConfig.TrackerPaused := False;
+  if FDetailsPanel <> nil then
+    FDetailsPanel.GlobalTrackerPaused := False;
+  RenderStatusBarIcons;
+  Args := TJSONObject.Create;
+  Args.Add('tracker_paused', False);
+  FRpc.UpdateSession(Args);
+  FSessionSyncCounter := 1;
 end;
 
 procedure TMainForm.ApplyListItemHeight;
@@ -2255,6 +2279,8 @@ var
   FreshSession: TSessionConfig;
 begin
   if FModalDepth > 0 then Exit;
+  if FRpc.IsLocalSession then
+    FRpc.EnsureLocalDaemonRunning;
   SaveSelectedIds;
   NewList := TList.Create;
   try
@@ -2279,6 +2305,8 @@ begin
             RenderStatusBarIcons;
         end;
       end;
+      if FDetailsPanel <> nil then
+        FDetailsPanel.GlobalTrackerPaused := FSessionConfig.TrackerPaused;
       CheckCompletedNotifications;
       if FHistory <> nil then
         FHistory.SyncFromTorrents(FAllTorrents, GetHistoryFilePath);
@@ -2809,12 +2837,16 @@ var
   Args: TJSONObject;
 begin
   FSessionConfig.TrackerPaused := not FSessionConfig.TrackerPaused;
+  if FDetailsPanel <> nil then
+    FDetailsPanel.GlobalTrackerPaused := FSessionConfig.TrackerPaused;
   RenderStatusBarIcons;
   Args := TJSONObject.Create;
   Args.Add('tracker_paused', FSessionConfig.TrackerPaused);
   if not FRpc.UpdateSession(Args) then
   begin
     FSessionConfig.TrackerPaused := not FSessionConfig.TrackerPaused;
+    if FDetailsPanel <> nil then
+      FDetailsPanel.GlobalTrackerPaused := FSessionConfig.TrackerPaused;
     RenderStatusBarIcons;
     MessageDlg('Tracker', 'Failed to change tracker state: ' + FRpc.LastError, mtError, [mbOK], 0);
     Exit;
@@ -3061,8 +3093,10 @@ begin
     ShouldActivate := (Lines.Count = 0) or (Trim(Lines[0]) <> '0');
     if ShouldActivate then
       BringMainWindowToFront;
+    FRpc.EnsureLocalDaemonRunning;
     for I := 1 to Lines.Count - 1 do
       ProcessExternalOpenArg(Lines[I]);
+    RefreshFromRpc;
   finally
     Lines.Free;
   end;

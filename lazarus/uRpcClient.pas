@@ -35,11 +35,13 @@ type
     FIsLocalSession: Boolean;    // True = รันและจัดการ transmission-daemon.exe ในเครื่องอัตโนมัติ
     FDataDir: string;            // โฟลเดอร์เก็บ config / torrents / resume ถาวร (-g)
     FDaemonProcess: TProcess;    // ออบเจกต์โปรเซสของ transmission-daemon.exe ที่เราเปิดขึ้นเอง
+    FInEnsureDaemon: Boolean;    // ป้องกันการเรียก EnsureLocalDaemonRunning ซ้อนกัน
     FLastError: string;          // ข้อความข้อผิดพลาดล่าสุด
     FConnected: Boolean;         // สถานะว่าเชื่อมต่อกับ RPC Server สำเร็จหรือไม่
 
     function GetRpcUrl: string;
     function FindDaemonExecutable: string;
+    procedure KillStaleLocalDaemons;
     function ExtractHeaderValue(Headers: TStrings; const HeaderName: string): string;
     function SendRpcRequest(const Method: string; Args: TJSONObject; out ResponseRoot: TJSONObject): Boolean;
   public
@@ -313,76 +315,162 @@ begin
     CopyDirContents(LegSep + 'blocklists', TgtSep + 'blocklists');
 end;
 
+procedure TTransmissionRpcClient.KillStaleLocalDaemons;
+var
+  Killer: TProcess;
+begin
+  StopLocalDaemonIfOwned;
+  Killer := TProcess.Create(nil);
+  try
+    Killer.Executable := 'taskkill.exe';
+    Killer.Parameters.Add('/F');
+    Killer.Parameters.Add('/IM');
+    Killer.Parameters.Add('transmission-daemon.exe');
+    Killer.Options := [poNoConsole, poWaitOnExit];
+    try
+      Killer.Execute;
+    except
+    end;
+  finally
+    Killer.Free;
+  end;
+end;
+
 function TTransmissionRpcClient.EnsureLocalDaemonRunning: Boolean;
 var
   DaemonExe, EffectiveDir: string;
   Cfg: TSessionConfig;
-  Retries: Integer;
+  Retries, CandPort: Integer;
 begin
   if not FIsLocalSession then
     Exit(True);
-
-  // หากมี Daemon ตอบกลับที่พอร์ตนี้อยู่แล้ว ไม่ต้องสั่งเปิดซ้ำ
-  if FetchSession(Cfg) then
-    Exit(True);
-
   if (FDaemonProcess <> nil) and FDaemonProcess.Running then
     Exit(True);
-
-  DaemonExe := FindDaemonExecutable;
-  if DaemonExe = '' then
-  begin
-    FLastError := 'Local transmission-daemon.exe not found in build/daemon/';
+  if (FDaemonProcess = nil) and FConnected then
+    Exit(True);
+  if FInEnsureDaemon then
     Exit(False);
-  end;
 
-  EffectiveDir := Trim(FDataDir);
-  if EffectiveDir = '' then
-    EffectiveDir := GetDefaultPortableDataDir;
-  ForceDirectories(EffectiveDir);
-  MigrateLegacyDaemonData(EffectiveDir);
-
-  FreeAndNil(FDaemonProcess);
-  FDaemonProcess := TProcess.Create(nil);
-  FDaemonProcess.Executable := DaemonExe;
-  FDaemonProcess.CurrentDirectory := ExtractFilePath(DaemonExe);
-  FDaemonProcess.Parameters.Add('-f'); // รันในโหมด Foreground ของโปรเซสย่อยแต่ซ่อนหน้าต่างด้วย poNoConsole
-  FDaemonProcess.Parameters.Add('-g');
-  FDaemonProcess.Parameters.Add(EffectiveDir);
-  FDaemonProcess.Parameters.Add('-p');
-  FDaemonProcess.Parameters.Add(IntToStr(FPort));
-  FDaemonProcess.Parameters.Add('-a');
-  FDaemonProcess.Parameters.Add('127.0.0.1,::1');
-  FDaemonProcess.Options := [poNoConsole];
+  FInEnsureDaemon := True;
   try
-    FDaemonProcess.Execute;
-  except
-    on E: Exception do
+    // แตกไฟล์ transmission-daemon.exe ที่ฝังใน EXE ออกมาไว้ที่ data\bin\ เสมอ
+    DaemonExe := FindDaemonExecutable;
+
+    // ตรวจสอบว่ามี Daemon ตอบกลับที่พอร์ตนี้อยู่แล้วหรือไม่ (ข้ามหากโปรเซสที่เราเปิดเองเพิ่งดับไป เพื่อไม่ต้องรอ TCP timeout 2 วินาที)
+    if (FDaemonProcess = nil) and FetchSession(Cfg) then
     begin
-      FLastError := 'Failed to launch local daemon: ' + E.Message;
-      FreeAndNil(FDaemonProcess);
+      if Cfg.SupportsTrackerPause then
+        Exit(True);
+
+      // พบโปรเซสเก่าหรือไม่ใช่ Modded Daemon (ไม่รองรับ tracker_paused / ht..tps://)
+      KillStaleLocalDaemons;
+      Sleep(350);
+      FSessionId := '';
+      DaemonExe := FindDaemonExecutable;
+
+      // หากพอร์ตเดิมยังถูกโปรแกรมอื่นครองอยู่ (เช่น transmission-qt เปิด Remote Access ค้างไว้) ให้ย้ายไปพอร์ตว่างอัตโนมัติ
+      if FetchSession(Cfg) and (not Cfg.SupportsTrackerPause) then
+      begin
+        for CandPort := 9093 to 9099 do
+        begin
+          FPort := CandPort;
+          FSessionId := '';
+          if not FetchSession(Cfg) then
+            Break
+          else if Cfg.SupportsTrackerPause then
+            Exit(True);
+        end;
+      end;
+    end;
+
+    if (FDaemonProcess <> nil) and FDaemonProcess.Running then
+      Exit(True);
+
+    if DaemonExe = '' then
+      DaemonExe := FindDaemonExecutable;
+    if DaemonExe = '' then
+    begin
+      FLastError := 'Local transmission-daemon.exe not found in embedded assets or build/daemon/';
       Exit(False);
     end;
-  end;
 
-  // รอสูงสุด 2.5 วินาทีเพื่อให้ HTTP RPC Server ของ Daemon เริ่มต้นเสร็จ
-  for Retries := 1 to 10 do
-  begin
-    Sleep(250);
-    if FetchSession(Cfg) then
-      Exit(True);
-  end;
+    EffectiveDir := Trim(FDataDir);
+    if EffectiveDir = '' then
+      EffectiveDir := GetDefaultPortableDataDir;
+    if not ForceDirectories(EffectiveDir) then
+    begin
+      EffectiveDir := GetDefaultPortableDataDir;
+      FDataDir := EffectiveDir;
+      ForceDirectories(EffectiveDir);
+    end;
+    MigrateLegacyDaemonData(EffectiveDir);
 
-  Result := FConnected;
+    FreeAndNil(FDaemonProcess);
+    FDaemonProcess := TProcess.Create(nil);
+    FDaemonProcess.Executable := DaemonExe;
+    FDaemonProcess.CurrentDirectory := ExtractFilePath(DaemonExe);
+    FDaemonProcess.Parameters.Add('-f'); // รันในโหมด Foreground ของโปรเซสย่อยแต่ซ่อนหน้าต่างด้วย poNoConsole
+    FDaemonProcess.Parameters.Add('-g');
+    FDaemonProcess.Parameters.Add(EffectiveDir);
+    FDaemonProcess.Parameters.Add('-p');
+    FDaemonProcess.Parameters.Add(IntToStr(FPort));
+    FDaemonProcess.Parameters.Add('-a');
+    FDaemonProcess.Parameters.Add('127.0.0.1,::1');
+    FDaemonProcess.Options := [poNoConsole];
+    try
+      FDaemonProcess.Execute;
+    except
+      on E: Exception do
+      begin
+        FLastError := 'Failed to launch local daemon: ' + E.Message;
+        FreeAndNil(FDaemonProcess);
+        Exit(False);
+      end;
+    end;
+
+    // รอสูงสุด 4 วินาทีเพื่อให้ HTTP RPC Server ของ Daemon เริ่มต้นเสร็จ
+    for Retries := 1 to 16 do
+    begin
+      Sleep(250);
+      if FetchSession(Cfg) then
+        Exit(True);
+    end;
+
+    Result := FConnected;
+  finally
+    FInEnsureDaemon := False;
+  end;
 end;
 
 procedure TTransmissionRpcClient.StopLocalDaemonIfOwned;
+var
+  Resp: TJSONObject;
+  WaitIdx: Integer;
+  WasEnsuring: Boolean;
 begin
   if FDaemonProcess <> nil then
   begin
     try
       if FDaemonProcess.Running then
-        FDaemonProcess.Terminate(0);
+      begin
+        WasEnsuring := FInEnsureDaemon;
+        FInEnsureDaemon := True;
+        try
+          Resp := nil;
+          if SendRpcRequest('session-close', nil, Resp) then
+            Resp.Free;
+        finally
+          FInEnsureDaemon := WasEnsuring;
+        end;
+        for WaitIdx := 1 to 8 do
+        begin
+          if not FDaemonProcess.Running then
+            Break;
+          Sleep(100);
+        end;
+        if FDaemonProcess.Running then
+          FDaemonProcess.Terminate(0);
+      end;
     except
     end;
     FreeAndNil(FDaemonProcess);
@@ -449,8 +537,16 @@ begin
 
   Http := TFPHTTPClient.Create(nil);
   try
-    Http.ConnectTimeout := 2500;
-    Http.IOTimeout := 5000;
+    if FIsLocalSession then
+    begin
+      Http.ConnectTimeout := 800;
+      Http.IOTimeout := 3000;
+    end
+    else
+    begin
+      Http.ConnectTimeout := 2500;
+      Http.IOTimeout := 5000;
+    end;
     Http.AllowRedirect := False;
     if FUsername <> '' then
     begin
@@ -458,8 +554,11 @@ begin
       Http.Password := FPassword;
     end;
 
-    for Attempt := 1 to 2 do
+    for Attempt := 1 to 3 do
     begin
+      if FIsLocalSession and (not FInEnsureDaemon) and (FDaemonProcess <> nil) and (not FDaemonProcess.Running) then
+        EnsureLocalDaemonRunning;
+
       Http.RequestHeaders.Clear;
       Http.RequestHeaders.Add('Content-Type: application/json');
       if FSessionId <> '' then
@@ -478,6 +577,12 @@ begin
             begin
               FLastError := E.Message;
               FConnected := False;
+              // หาก Local Daemon ถูกปิดหรือหลุดไป ให้สั่งเปิดใหม่โดยอัตโนมัติแล้วลองส่งซ้ำทันที
+              if FIsLocalSession and (not FInEnsureDaemon) and (Attempt = 1) then
+              begin
+                if EnsureLocalDaemonRunning then
+                  Continue;
+              end;
               Exit(False);
             end;
           end;
@@ -585,8 +690,9 @@ begin
     Config.DownloadQueueSize := JsonGetInt(Args, 'download-queue-size', 5);
     Config.SeedQueueEnabled := JsonGetBool(Args, 'seed-queue-enabled', False);
     Config.SeedQueueSize := JsonGetInt(Args, 'seed-queue-size', 10);
-    Config.TrackerPaused := JsonGetBool(Args, 'tracker_paused', False);
-    Config.TrackerAutoPause := JsonGetBool(Args, 'tracker_auto_pause', False);
+    Config.TrackerPaused := JsonGetBool(Args, 'tracker_paused', JsonGetBool(Args, 'tracker-paused', False));
+    Config.TrackerAutoPause := JsonGetBool(Args, 'tracker_auto_pause', JsonGetBool(Args, 'tracker-auto-pause', False));
+    Config.SupportsTrackerPause := (Args.Find('tracker_paused') <> nil) or (Args.Find('tracker-paused') <> nil);
     Config.CacheSizeMiB := JsonGetInt(Args, 'cache_size_mib', JsonGetInt(Args, 'cache-size-mb', 4));
   finally
     Resp.Free;
@@ -716,8 +822,8 @@ begin
       Item.SeedRatioMode := JsonGetInt(TorObj, 'seedRatioMode', TR_RATIOLIMIT_GLOBAL);
       Item.SeedRatioLimit := JsonGetFloat(TorObj, 'seedRatioLimit', 2.0);
       Item.MagnetLink := JsonGetStr(TorObj, 'magnetLink', '');
-      Item.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', False);
-      Item.TrackerAutoPause := JsonGetBool(TorObj, 'tracker_auto_pause', False);
+      Item.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', JsonGetBool(TorObj, 'tracker-paused', False));
+      Item.TrackerAutoPause := JsonGetBool(TorObj, 'tracker_auto_pause', JsonGetBool(TorObj, 'tracker-auto-pause', False));
 
       TrkArr := TorObj.Find('trackerStats') as TJSONArray;
       if (TrkArr <> nil) and (TrkArr.Count > 0) then
@@ -830,8 +936,8 @@ begin
     Torrent.SeedIdleMode := JsonGetInt(TorObj, 'seedIdleMode', 0);
     Torrent.SeedIdleLimit := JsonGetInt(TorObj, 'seedIdleLimit', 30);
     Torrent.PeerLimit := JsonGetInt(TorObj, 'peer-limit', 50);
-    Torrent.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', False);
-    Torrent.TrackerAutoPause := JsonGetBool(TorObj, 'tracker_auto_pause', False);
+    Torrent.TrackerPaused := JsonGetBool(TorObj, 'tracker_paused', JsonGetBool(TorObj, 'tracker-paused', False));
+    Torrent.TrackerAutoPause := JsonGetBool(TorObj, 'tracker_auto_pause', JsonGetBool(TorObj, 'tracker-auto-pause', False));
     Torrent.MagnetLink := JsonGetStr(TorObj, 'magnetLink', Torrent.MagnetLink);
 
     FilesArr := TorObj.Find('files') as TJSONArray;
@@ -1208,8 +1314,16 @@ begin
 
   Http := TFPHTTPClient.Create(nil);
   try
-    Http.ConnectTimeout := 2500;
-    Http.IOTimeout := 5000;
+    if FIsLocalSession then
+    begin
+      Http.ConnectTimeout := 800;
+      Http.IOTimeout := 3000;
+    end
+    else
+    begin
+      Http.ConnectTimeout := 2500;
+      Http.IOTimeout := 5000;
+    end;
     Http.AllowRedirect := False;
     if FUsername <> '' then
     begin

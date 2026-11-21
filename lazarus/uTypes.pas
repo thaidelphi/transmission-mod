@@ -194,6 +194,7 @@ type
     SeedQueueSize: Integer;             // จำนวนทอร์เรนต์ที่ปล่อยไฟล์พร้อมกันได้สูงสุด
     TrackerPaused: Boolean;             // ปิดการส่ง Packet ไปหา Tracker ทั้งโปรแกรมหรือไม่
     TrackerAutoPause: Boolean;          // ดึง Peer รอบแรกแล้วหยุดส่ง Packet Tracker อัตโนมัติ (ทั้งโปรแกรม)
+    SupportsTrackerPause: Boolean;      // Daemon รองรับฟิลด์ tracker_paused และ ht..tps:// หรือไม่
     CacheSizeMiB: Integer;              // ขนาด RAM Cache สำหรับเขียน/อ่านดิสก์ (MiB)
   end;
 
